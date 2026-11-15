@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!-- Web API host: composition root. No business logic here, only dependency wiring, authentication and the pipeline. -->
+  <PropertyGroup>
+    <UserSecretsId>videoservice-api</UserSecretsId>
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Maksov.VideoService.Web" />
+    <ProjectReference Include="..\Maksov.VideoService.Videos.Bll\Maksov.VideoService.Videos.Bll.csproj" />
+    <ProjectReference Include="..\Maksov.VideoService.Videos.Dal\Maksov.VideoService.Videos.Dal.csproj" />
+    <ProjectReference Include="..\Maksov.VideoService.Videos.Features.Videos\Maksov.VideoService.Videos.Features.Videos.csproj" />
+    <ProjectReference Include="..\Maksov.VideoService.Videos.Features.Feed\Maksov.VideoService.Videos.Features.Feed.csproj" />
+    <PackageReference Include="Maksov.VideoService.BuildingBlocks" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Http" />
+  </ItemGroup>
+
+</Project>
+

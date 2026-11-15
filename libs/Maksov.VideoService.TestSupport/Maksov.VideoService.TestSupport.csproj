@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Shared by service tests: test authentication (user from the X-Test-User header) and temporary Postgres databases. -->
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <PackageId>Maksov.VideoService.TestSupport</PackageId>
+    <Description>VideoService service test helpers.</Description>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="Npgsql" />
+  </ItemGroup>
+
+</Project>

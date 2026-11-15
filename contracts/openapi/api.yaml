@@ -1,0 +1,534 @@
+openapi: 3.1.0
+info:
+  title: VideoService API
+  version: 0.3.0
+  description: |
+    Public API exposed through the gateway (`http://localhost:8081`). The gateway validates the JWT and routes:
+    `GET /api/videos/{id}/description` → analysis; `/api/videos/{id}/comments/**` → comments; `GET /api/feed`,
+    `GET /api/users/{id}/videos`, `/api/videos/**` → videos; `/api/users/**` → users.
+    Internal endpoints (`/internal/**`) are not published through the gateway (404); see `internal-analysis.yaml`,
+    `internal-comments.yaml`, `internal-users.yaml`.
+
+    Lesson 1: video upload (vertical 9:16 is the target, horizontal is supported), processing status,
+    own video list, DASH/HLS playback, video description, profiles, follows, people search, feed, comments, deletion.
+    All endpoints require a Keycloak JWT (realm `videoservice`, audience `videoservice-api`).
+
+    Visibility: **`ready` videos are visible to any authenticated user** (get, stream, poster, feed, profile grid).
+    A video in any other status is visible only to its owner; for everyone else it is indistinguishable from a nonexistent one (404), as is a deleted video.
+    Description: the owner sees any status; others see only `done`.
+servers:
+  - url: http://localhost:8081
+security:
+  - keycloak: []
+tags:
+  - name: Videos
+  - name: Descriptions
+  - name: Users
+  - name: Feed
+  - name: Comments
+paths:
+  /api/videos:
+    post:
+      tags: [Videos]
+      operationId: CreateUpload
+      summary: Create a video and get a presigned PUT URL for storage
+      description: "The file is uploaded directly to MinIO via `uploadUrl` with the headers from `uploadHeaders`. Limit: 20 requests per minute per user."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateUploadRequest' }
+      responses:
+        '201':
+          description: Video created in awaiting_upload status
+          headers:
+            Location: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CreateUploadResponse' }
+        '400': { $ref: '#/components/responses/ValidationProblem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { description: Too many requests }
+    get:
+      tags: [Videos]
+      operationId: ListMyVideos
+      summary: My videos, newest first (keyset pagination)
+      parameters:
+        - { name: cursor, in: query, schema: { type: string, maxLength: 64 }, description: Opaque cursor from nextCursor }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
+      responses:
+        '200':
+          description: Page
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VideoPage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/videos/{id}:
+    get:
+      tags: [Videos]
+      operationId: GetVideo
+      summary: "Video (owner: any status; others: `ready` only)"
+      parameters: [{ $ref: '#/components/parameters/VideoId' }]
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Video' }
+          description: Video
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Videos]
+      operationId: DeleteVideo
+      summary: Delete own video
+      description: |
+        Owner only; another user's or a nonexistent video returns 404. The video is marked deleted, and the source and segments are removed from MinIO
+        (a storage cleanup failure does not cancel the deletion); a `video.deleted.v1` event is written to the outbox for analysis and comments
+        (the description and comments are deleted by cascade).
+      parameters: [{ $ref: '#/components/parameters/VideoId' }]
+      responses:
+        '204': { description: Deleted }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/videos/{id}/complete:
+    post:
+      tags: [Videos]
+      operationId: CompleteUpload
+      summary: Report upload completion and enqueue transcoding
+      description: Idempotent. A repeated call returns the current state and does not create a second job.
+      parameters: [{ $ref: '#/components/parameters/VideoId' }]
+      responses:
+        '202':
+          description: Job enqueued (or already existed)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Video' }
+        '400': { $ref: '#/components/responses/ValidationProblem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: File not uploaded yet (`upload_missing`) or video rejected (`video_failed`)
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+  /api/videos/{id}/stream/{file}:
+    get:
+      tags: [Videos]
+      operationId: StreamMedia
+      summary: DASH/HLS manifest or CMAF segment (Ready only; any authenticated user)
+      parameters:
+        - { $ref: '#/components/parameters/VideoId' }
+        - name: file
+          in: path
+          required: true
+          schema: { type: string, pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$' }
+          examples:
+            dash: { value: manifest.mpd }
+            hls: { value: master.m3u8 }
+            segment: { value: chunk-stream0-00001.m4s }
+      responses:
+        '200':
+          description: Stream
+          headers:
+            Cache-Control: { schema: { type: string }, description: 'manifest: private, max-age=60; segment: private, max-age=86400, immutable' }
+          content:
+            application/dash+xml: {}
+            application/vnd.apple.mpegurl: {}
+            video/iso.segment: {}
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/videos/{id}/poster:
+    get:
+      tags: [Videos]
+      operationId: GetPoster
+      parameters: [{ $ref: '#/components/parameters/VideoId' }]
+      responses:
+        '200': { description: JPEG, content: { image/jpeg: {} } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/videos/{id}/description:
+    get:
+      tags: [Descriptions]
+      operationId: GetDescription
+      summary: Automatic video description
+      description: |
+        The analysis service builds the description after the video becomes `ready`: Russian-language text and tags based on readings from
+        ffmpeg tools (scene changes, brightness, color, motion, audio). While the description is not ready, the status is `queued`
+        or `processing` and `text` is null. An analysis failure (`failed`) does not affect the video itself.
+        Visibility: the owner sees any status; other authenticated users see only `done` (otherwise 404).
+        404 is also returned if no analysis exists yet (event not delivered) or the video was deleted.
+      parameters: [{ $ref: '#/components/parameters/VideoId' }]
+      responses:
+        '200':
+          description: Description state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Description' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/videos/{id}/comments:
+    get:
+      tags: [Comments]
+      operationId: ListComments
+      summary: Comments on a video, newest first (keyset pagination)
+      parameters:
+        - { $ref: '#/components/parameters/VideoId' }
+        - { name: cursor, in: query, schema: { type: string, maxLength: 64 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
+      responses:
+        '200':
+          description: Page of comments and total count
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CommentPage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Comments]
+      operationId: AddComment
+      summary: Add a comment
+      description: The video must be known to the comments service (registered by the `video.processed.v1` event after `ready`); otherwise 404.
+      parameters: [{ $ref: '#/components/parameters/VideoId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AddCommentRequest' }
+      responses:
+        '201':
+          description: Comment created
+          headers:
+            Location: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Comment' }
+        '400': { $ref: '#/components/responses/ValidationProblem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/videos/{id}/comments/{commentId}:
+    delete:
+      tags: [Comments]
+      operationId: DeleteComment
+      summary: Delete a comment
+      description: 'The comment author or the video owner can delete it (`canDelete`). A comment the caller may not delete is indistinguishable from a nonexistent one: 404.'
+      parameters:
+        - { $ref: '#/components/parameters/VideoId' }
+        - { name: commentId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '204': { description: Deleted }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/feed:
+    get:
+      tags: [Feed]
+      operationId: GetFeed
+      summary: "Feed: ready videos from people the user follows, plus their own; newest first"
+      description: Follows are fetched from the users service (20 s cache). If users is unavailable, the feed shows only the user's own videos.
+      parameters:
+        - { name: cursor, in: query, schema: { type: string, maxLength: 64 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 30, default: 12 } }
+      responses:
+        '200':
+          description: Feed page
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FeedPage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/users/{id}/videos:
+    get:
+      tags: [Feed]
+      operationId: ListUserVideos
+      summary: "Profile grid: a person's ready videos, newest first"
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: User ID (Keycloak `sub`)
+          schema: { type: string, maxLength: 128 }
+        - { name: cursor, in: query, schema: { type: string, maxLength: 64 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 30, default: 12 } }
+      responses:
+        '200':
+          description: Page of videos (empty if the person has no ready videos)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FeedPage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/users:
+    get:
+      tags: [Users]
+      operationId: SearchUsers
+      summary: Search people by username or display name prefix
+      description: Case-insensitive; the caller is excluded from results; an empty query returns an empty list; the query is truncated to 60 characters.
+      parameters:
+        - { name: query, in: query, schema: { type: string, maxLength: 60 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
+      responses:
+        '200':
+          description: People found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserSearchResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/users/{id}/follow:
+    put:
+      tags: [Users]
+      operationId: Follow
+      summary: Follow (idempotent)
+      description: Following yourself is not allowed (400); an unknown user returns 404.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, maxLength: 128 } }
+      responses:
+        '204': { description: Follow exists }
+        '400': { $ref: '#/components/responses/ValidationProblem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Users]
+      operationId: Unfollow
+      summary: Unfollow (idempotent)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, maxLength: 128 } }
+      responses:
+        '204': { description: Follow does not exist }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/users/me:
+    get:
+      tags: [Users]
+      operationId: GetMe
+      summary: My profile (created on first access)
+      description: The profile is created on first access; `displayName` defaults to the username.
+      responses:
+        '200':
+          description: Profile
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Profile' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    put:
+      tags: [Users]
+      operationId: UpdateMe
+      summary: Update display name and bio
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateProfileRequest' }
+      responses:
+        '200':
+          description: Updated profile
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Profile' }
+        '400': { $ref: '#/components/responses/ValidationProblem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/users/{id}:
+    get:
+      tags: [Users]
+      operationId: GetProfile
+      summary: User profile
+      description: 'Public profile (Instagram-style): username, display name, bio, follower and following counts, and an "is followed by you" flag.'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: User ID (Keycloak `sub`)
+          schema: { type: string, maxLength: 128 }
+      responses:
+        '200':
+          description: Public profile
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublicProfile' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+components:
+  securitySchemes:
+    keycloak:
+      type: openIdConnect
+      openIdConnectUrl: http://localhost:8080/realms/videoservice/.well-known/openid-configuration
+  parameters:
+    VideoId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+  responses:
+    Unauthorized: { description: Token missing or invalid }
+    NotFound:
+      description: No such video, or it does not belong to the user
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/ProblemDetails' }
+    ValidationProblem:
+      description: Validation error
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/ProblemDetails' }
+  schemas:
+    CreateUploadRequest:
+      type: object
+      required: [title, fileName, contentType, sizeBytes]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 200 }
+        fileName: { type: string, maxLength: 255 }
+        contentType: { type: string, enum: [video/mp4, video/quicktime, video/webm, video/x-matroska] }
+        sizeBytes: { type: integer, format: int64, minimum: 1, description: 'At most Upload:MaxBytes (default 2 GiB)' }
+    CreateUploadResponse:
+      type: object
+      required: [videoId, uploadUrl, uploadMethod, uploadHeaders, expiresAt]
+      properties:
+        videoId: { type: string, format: uuid }
+        uploadUrl: { type: string, format: uri }
+        uploadMethod: { type: string, const: PUT }
+        uploadHeaders: { type: object, additionalProperties: { type: string } }
+        expiresAt: { type: string, format: date-time }
+    VideoStatus:
+      type: string
+      enum: [awaiting_upload, uploaded, processing, ready, failed]
+      description: A deleted video is never returned (404); the `deleted` status does not appear in the API.
+    Rendition:
+      type: object
+      required: [name, width, height, kbps]
+      properties:
+        name: { type: string, examples: ['720p'] }
+        width: { type: integer }
+        height: { type: integer }
+        kbps: { type: integer }
+    Playback:
+      type: object
+      required: [dash, hls, poster]
+      properties:
+        dash: { type: string, examples: ['/api/videos/{id}/stream/manifest.mpd'] }
+        hls: { type: string, examples: ['/api/videos/{id}/stream/master.m3u8'] }
+        poster: { type: string }
+    Video:
+      type: object
+      required: [id, title, ownerId, ownerUsername, status, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        ownerId: { type: string, description: Keycloak sub of the author }
+        ownerUsername: { type: string, description: Author's username at upload time }
+        status: { $ref: '#/components/schemas/VideoStatus' }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        sizeBytes: { type: [integer, 'null'], format: int64 }
+        durationMs: { type: [integer, 'null'] }
+        width: { type: [integer, 'null'] }
+        height: { type: [integer, 'null'] }
+        renditions: { type: [array, 'null'], items: { $ref: '#/components/schemas/Rendition' } }
+        failureReason:
+          type: [string, 'null']
+          description: unsupported_format | no_video_stream | duration_exceeded | resolution_exceeded | invalid_media | file_too_large | too_many_streams | transcode_error | max_attempts
+        playback:
+          description: Only for status=ready
+          oneOf: [{ $ref: '#/components/schemas/Playback' }, { type: 'null' }]
+    VideoPage:
+      type: object
+      required: [items, nextCursor]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Video' } }
+        nextCursor: { type: [string, 'null'] }
+    Description:
+      type: object
+      required: [videoId, status, tags, updatedAt]
+      properties:
+        videoId: { type: string, format: uuid }
+        status: { type: string, enum: [queued, processing, done, failed] }
+        text: { type: [string, 'null'], description: Non-empty only when status=done }
+        tags: { type: array, items: { type: string } }
+        updatedAt: { type: string, format: date-time }
+    Profile:
+      type: object
+      required: [id, username, displayName, bio, createdAt, followersCount, followingCount]
+      properties:
+        id: { type: string, description: Keycloak sub }
+        username: { type: string }
+        displayName: { type: string, minLength: 1, maxLength: 60 }
+        bio: { type: string, maxLength: 300 }
+        createdAt: { type: string, format: date-time }
+        followersCount: { type: integer }
+        followingCount: { type: integer }
+    PublicProfile:
+      type: object
+      required: [id, username, displayName, bio, followersCount, followingCount, isFollowing]
+      properties:
+        id: { type: string }
+        username: { type: string }
+        displayName: { type: string }
+        bio: { type: string }
+        followersCount: { type: integer }
+        followingCount: { type: integer }
+        isFollowing: { type: boolean, description: Whether the caller follows this person }
+    UserSummary:
+      type: object
+      required: [id, username, displayName, bio, isFollowing]
+      properties:
+        id: { type: string }
+        username: { type: string }
+        displayName: { type: string }
+        bio: { type: string }
+        isFollowing: { type: boolean }
+    UserSearchResponse:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/UserSummary' } }
+    FeedItem:
+      type: object
+      required: [id, title, ownerId, ownerUsername, createdAt, durationMs, width, height, playback]
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        ownerId: { type: string }
+        ownerUsername: { type: string }
+        createdAt: { type: string, format: date-time }
+        durationMs: { type: integer }
+        width: { type: integer }
+        height: { type: integer }
+        playback: { $ref: '#/components/schemas/Playback' }
+    FeedPage:
+      type: object
+      required: [items, nextCursor]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/FeedItem' } }
+        nextCursor: { type: [string, 'null'] }
+    Comment:
+      type: object
+      required: [id, videoId, authorId, authorUsername, text, createdAt, canDelete]
+      properties:
+        id: { type: string, format: uuid }
+        videoId: { type: string, format: uuid }
+        authorId: { type: string }
+        authorUsername: { type: string }
+        text: { type: string, minLength: 1, maxLength: 500 }
+        createdAt: { type: string, format: date-time }
+        canDelete: { type: boolean, description: Comment author or video owner }
+    CommentPage:
+      type: object
+      required: [items, nextCursor, total]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Comment' } }
+        nextCursor: { type: [string, 'null'] }
+        total: { type: integer }
+    AddCommentRequest:
+      type: object
+      required: [text]
+      properties:
+        text: { type: string, minLength: 1, maxLength: 500, description: Trimmed at both ends }
+    UpdateProfileRequest:
+      type: object
+      required: [displayName]
+      properties:
+        displayName: { type: string, minLength: 1, maxLength: 60 }
+        bio: { type: string, maxLength: 300 }
+    ProblemDetails:
+      type: object
+      properties:
+        type: { type: string }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        errors: { type: object, additionalProperties: { type: array, items: { type: string } } }
+

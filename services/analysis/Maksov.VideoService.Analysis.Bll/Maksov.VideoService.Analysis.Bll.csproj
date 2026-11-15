@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Description service business logic: ports for the analysis store and job queue. -->
+  <ItemGroup>
+    <PackageReference Include="Maksov.VideoService.Primitives" />
+  </ItemGroup>
+
+</Project>

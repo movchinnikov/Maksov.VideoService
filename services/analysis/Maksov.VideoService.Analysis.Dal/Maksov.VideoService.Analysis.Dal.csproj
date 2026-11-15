@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Description service data: Postgres adapters (store + SKIP LOCKED queue) and migrations. The database belongs to this service only. -->
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <ProjectReference Include="..\Maksov.VideoService.Analysis.Bll\Maksov.VideoService.Analysis.Bll.csproj" />
+    <PackageReference Include="Maksov.VideoService.BuildingBlocks" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Npgsql" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Postgres\Migrations\*.sql" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Maksov.VideoService.Analysis.Tests" />
+  </ItemGroup>
+
+</Project>

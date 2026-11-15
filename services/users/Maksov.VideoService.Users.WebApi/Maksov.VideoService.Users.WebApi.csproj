@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!-- Users service host: composition root. -->
+  <PropertyGroup>
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Maksov.VideoService.Users.Bll\Maksov.VideoService.Users.Bll.csproj" />
+    <ProjectReference Include="..\Maksov.VideoService.Users.Dal\Maksov.VideoService.Users.Dal.csproj" />
+    <ProjectReference Include="..\Maksov.VideoService.Users.Features.Profiles\Maksov.VideoService.Users.Features.Profiles.csproj" />
+    <PackageReference Include="Maksov.VideoService.Web" />
+    <PackageReference Include="Maksov.VideoService.BuildingBlocks" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Http" />
+  </ItemGroup>
+
+</Project>

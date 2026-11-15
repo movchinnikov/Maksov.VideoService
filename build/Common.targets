@@ -1,0 +1,7 @@
+<Project>
+  <!-- Shared settings for test projects (imported from Directory.Build.props). -->
+  <ItemGroup Condition="'$(IsTestProject)' == 'true'">
+    <Using Include="Xunit" />
+  </ItemGroup>
+</Project>
+

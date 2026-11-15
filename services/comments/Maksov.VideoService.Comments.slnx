@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/comments/">
+    <Project Path="Maksov.VideoService.Comments.Bll/Maksov.VideoService.Comments.Bll.csproj" />
+    <Project Path="Maksov.VideoService.Comments.Dal/Maksov.VideoService.Comments.Dal.csproj" />
+    <Project Path="Maksov.VideoService.Comments.Features.Comments/Maksov.VideoService.Comments.Features.Comments.csproj" />
+    <Project Path="Maksov.VideoService.Comments.WebApi/Maksov.VideoService.Comments.WebApi.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Maksov.VideoService.Comments.Tests/Maksov.VideoService.Comments.Tests.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Comments feature: ListComments, AddComment, DeleteComment slices, video event intake. Depends on ports (Bll) and the shared web layer; does not depend on Dal or the host. -->
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <Using Include="Microsoft.AspNetCore.Builder" />
+    <Using Include="Microsoft.AspNetCore.Http" />
+    <Using Include="Microsoft.AspNetCore.Routing" />
+    <Using Include="Microsoft.Extensions.Configuration" />
+    <Using Include="Microsoft.Extensions.DependencyInjection" />
+    <ProjectReference Include="..\Maksov.VideoService.Comments.Bll\Maksov.VideoService.Comments.Bll.csproj" />
+    <PackageReference Include="Maksov.VideoService.Web" />
+  </ItemGroup>
+
+</Project>

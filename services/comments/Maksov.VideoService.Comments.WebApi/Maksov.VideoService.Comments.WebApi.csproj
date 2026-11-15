@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!-- Comments service host: composition root. -->
+  <PropertyGroup>
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Maksov.VideoService.Comments.Bll\Maksov.VideoService.Comments.Bll.csproj" />
+    <ProjectReference Include="..\Maksov.VideoService.Comments.Dal\Maksov.VideoService.Comments.Dal.csproj" />
+    <ProjectReference Include="..\Maksov.VideoService.Comments.Features.Comments\Maksov.VideoService.Comments.Features.Comments.csproj" />
+    <PackageReference Include="Maksov.VideoService.Web" />
+    <PackageReference Include="Maksov.VideoService.BuildingBlocks" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Http" />
+  </ItemGroup>
+
+</Project>

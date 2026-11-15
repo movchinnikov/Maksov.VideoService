@@ -1,0 +1,27 @@
+<Project>
+  <!-- Single point for the .NET version and shared build settings for all solutions (libs, services/*). -->
+  <PropertyGroup>
+    <TargetFramework>net11.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <Deterministic>true</Deterministic>
+    <IsPackable>false</IsPackable>
+
+    <!-- Version of the libs/* NuGet packages; the suffix is set by make pack: local.<hash>, CI — ci.<number> -->
+    <VersionPrefix>0.1.0</VersionPrefix>
+    <Authors>VideoService</Authors>
+    <Company>VideoService</Company>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <RepositoryType>git</RepositoryType>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(CI)' == 'true'">
+    <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
+  </PropertyGroup>
+</Project>
+

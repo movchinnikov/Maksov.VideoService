@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<configuration>
+  <packageSources>
+    <clear />
+    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
+  </packageSources>
+  <!--
+    Shared libs/* libraries are built into the local feed by `make pack` (artifacts/nuget).
+    Services consume the shared libraries as packages from this feed (make pack).
+    An external consumer adds the feed: dotnet nuget add source <repo>/artifacts/nuget -n videoservice-local
+  -->
+</configuration>

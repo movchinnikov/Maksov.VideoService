@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/users/">
+    <Project Path="Maksov.VideoService.Users.Bll/Maksov.VideoService.Users.Bll.csproj" />
+    <Project Path="Maksov.VideoService.Users.Dal/Maksov.VideoService.Users.Dal.csproj" />
+    <Project Path="Maksov.VideoService.Users.Features.Profiles/Maksov.VideoService.Users.Features.Profiles.csproj" />
+    <Project Path="Maksov.VideoService.Users.WebApi/Maksov.VideoService.Users.WebApi.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Maksov.VideoService.Users.Tests/Maksov.VideoService.Users.Tests.csproj" />
+  </Folder>
+</Solution>

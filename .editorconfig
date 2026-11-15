@@ -1,0 +1,34 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+indent_style = space
+indent_size = 4
+trim_trailing_whitespace = true
+
+[*.{json,yml,yaml,ts,tsx,js,css,html,md,xml,csproj,props}]
+indent_size = 2
+
+[*.cs]
+csharp_style_namespace_declarations = file_scoped:warning
+csharp_style_var_for_built_in_types = true:suggestion
+dotnet_sort_system_directives_first = true
+
+# ASP.NET applications: ConfigureAwait is not needed (enabled separately in libs/*).
+dotnet_diagnostic.CA2007.severity = none
+# Internal classes are created via DI.
+dotnet_diagnostic.CA1812.severity = none
+# Lessons favor readability; message localization is not required.
+dotnet_diagnostic.CA1303.severity = none
+dotnet_diagnostic.CA1305.severity = none
+dotnet_diagnostic.CA1307.severity = none
+dotnet_diagnostic.CA1310.severity = none
+# Suffixes like Queue in port names are meaningful.
+dotnet_diagnostic.CA1711.severity = none
+# Test names with underscores.
+dotnet_diagnostic.CA1707.severity = none
+
+[libs/**.cs]
+dotnet_diagnostic.CA2007.severity = warning

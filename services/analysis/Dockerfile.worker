@@ -1,0 +1,44 @@
+# syntax=docker/dockerfile:1.7
+# Build context is the repository root. Shared libraries (libs/) are built into NuGet packages in the first stage,
+# the service gets them from the local artifacts/nuget feed (same as in local development: make pack).
+FROM mcr.microsoft.com/dotnet/sdk:11.0 AS libs
+WORKDIR /src
+ENV DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
+COPY .editorconfig ./
+COPY build/ build/
+COPY libs/ libs/
+# Package version = hash of libs sources: libraries changed — new version, so the NuGet cache never serves a stale one.
+RUN --mount=type=cache,target=/root/.nuget/packages,sharing=locked \
+    HASH=$(find build libs -type f \( -name '*.cs' -o -name '*.csproj' -o -name '*.props' -o -name '*.targets' \) -not -path '*/bin/*' -not -path '*/obj/*' | LC_ALL=C sort | xargs sha256sum | sha256sum | cut -c1-8) \
+    && for p in Primitives BuildingBlocks Web; do \
+         dotnet pack libs/Maksov.VideoService.$p -c Release -o /feed -p:VersionSuffix=local.$HASH || exit 1; \
+       done
+
+FROM mcr.microsoft.com/dotnet/sdk:11.0 AS build
+WORKDIR /src
+ENV DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
+COPY .editorconfig ./
+COPY build/ build/
+COPY --from=libs /feed artifacts/nuget/
+COPY services/analysis/ services/analysis/
+RUN --mount=type=cache,target=/root/.nuget/packages,sharing=locked \
+    dotnet publish services/analysis/Maksov.VideoService.Analysis.Worker/Maksov.VideoService.Analysis.Worker.csproj -c Release -o /app -p:UseAppHost=false
+
+# aspnet, not runtime: the Dal assembly (shared with the API) references Microsoft.AspNetCore.App (health checks).
+FROM mcr.microsoft.com/dotnet/aspnet:11.0 AS runtime
+# ffmpeg/ffprobe from distribution packages; the version is pinned by the base image tag.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /work && chown "$APP_UID" /work
+WORKDIR /app
+ENV DOTNET_gcServer=0 \
+    DOTNET_GCConserveMemory=5 \
+    Analysis__WorkDirectory=/work \
+    Analysis__HeartbeatFile=/tmp/worker-alive
+COPY --from=build /app .
+USER $APP_UID
+# The heartbeat is refreshed by the queue loop and lease renewal; older than 2 minutes — the worker is hung.
+HEALTHCHECK --interval=15s --timeout=3s --start-period=20s --retries=3 \
+    CMD ["sh", "-c", "test -n \"$(find /tmp/worker-alive -mmin -2 2>/dev/null)\""]
+ENTRYPOINT ["dotnet", "Maksov.VideoService.Analysis.Worker.dll"]

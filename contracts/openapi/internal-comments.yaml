@@ -1,0 +1,93 @@
+openapi: 3.1.0
+info:
+  title: VideoService Comments (internal)
+  version: 0.1.0
+  description: |
+    Internal API of the comments service (receives `video.processed.v1` and `video.deleted.v1` events). Reachable only by other services
+    inside the compose network (`http://comments:8080`), protected by the `X-Internal-Key` header (`INTERNAL_API_KEY` variable).
+    Not published through the gateway: an external `/internal/**` request gets 404.
+    The service's public routes (`/api/videos/{id}/comments`) are described in `api.yaml`.
+servers:
+  - url: http://comments:8080
+security:
+  - internalKey: []
+tags:
+  - name: Internal
+paths:
+  /internal/v1/events/video-processed:
+    post:
+      tags: [Internal]
+      operationId: AcceptVideoProcessed
+      summary: Register a video (known_videos replica)
+      description: |
+        Sent by the videos outbox dispatcher (subscriber `comments`, address `Outbox__Subscribers__comments__BaseUrl`); retried with backoff.
+        Comments uses only `videoId` and `ownerId` from the event (the owner is needed so they can delete others' comments under their video).
+        Idempotent by `videoId`. A late event does not resurrect a deleted video (tombstone record).
+        Validation: `schemaVersion` = 1; `eventId` and `videoId` are non-empty; `ownerId` is required (up to 128 characters).
+        Body schema: `contracts/events/video-processed.v1.json` (extra fields are ignored).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '../events/video-processed.v1.json'
+      responses:
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Accepted' }
+        '400':
+          description: Event failed validation
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+        '401':
+          description: Missing or invalid `X-Internal-Key`
+  /internal/v1/events/video-deleted:
+    post:
+      tags: [Internal]
+      operationId: ForgetVideo
+      summary: Forget a video and cascade-delete its comments
+      description: |
+        Idempotent: a repeat or an event for an unknown video returns 202. The video remains as a tombstone so that a late `video.processed.v1` does not resurrect it.
+        Validation: `schemaVersion` = 1; `eventId` and `videoId` are non-empty. Body schema: `contracts/events/video-deleted.v1.json`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '../events/video-deleted.v1.json'
+      responses:
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Accepted' }
+        '400':
+          description: Event failed validation
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+        '401':
+          description: Missing or invalid `X-Internal-Key`
+components:
+  securitySchemes:
+    internalKey:
+      type: apiKey
+      in: header
+      name: X-Internal-Key
+  schemas:
+    Accepted:
+      type: object
+      required: [ok]
+      properties:
+        ok: { type: boolean }
+    ProblemDetails:
+      type: object
+      properties:
+        type: { type: string }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        errors: { type: object, additionalProperties: { type: array, items: { type: string } } }

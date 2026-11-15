@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/libs/">
+    <Project Path="Maksov.VideoService.BuildingBlocks/Maksov.VideoService.BuildingBlocks.csproj" />
+    <Project Path="Maksov.VideoService.Primitives/Maksov.VideoService.Primitives.csproj" />
+    <Project Path="Maksov.VideoService.TestSupport/Maksov.VideoService.TestSupport.csproj" />
+    <Project Path="Maksov.VideoService.Web/Maksov.VideoService.Web.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Maksov.VideoService.BuildingBlocks.Tests/Maksov.VideoService.BuildingBlocks.Tests.csproj" />
+  </Folder>
+</Solution>

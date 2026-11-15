@@ -1,0 +1,133 @@
+import { getAccessToken } from '../../app/auth';
+import type {
+  CreateUploadRequest,
+  CreateUploadResponse,
+  Comment,
+  CommentPage,
+  Description,
+  FeedPage,
+  UserCard,
+  UserSummary,
+  ProblemDetails,
+  Profile,
+  UpdateProfileRequest,
+  Video,
+  VideoPage,
+} from './types';
+
+export class ApiError extends Error {
+  readonly status: number;
+  readonly problem: ProblemDetails | null;
+
+  constructor(status: number, problem: ProblemDetails | null) {
+    super(describeProblem(status, problem));
+    this.status = status;
+    this.problem = problem;
+  }
+}
+
+/** Problem Details → short human-readable message. */
+export function describeProblem(status: number, problem: ProblemDetails | null): string {
+  const fieldError = problem?.errors ? Object.values(problem.errors).flat()[0] : undefined;
+  if (fieldError) return fieldError;
+  if (problem?.title && status !== 500) return problem.title;
+  switch (status) {
+    case 401:
+      return 'Session expired. Please sign in again.';
+    case 404:
+      return 'No such video — or it is not yours.';
+    case 429:
+      return 'Too many uploads in a row. Wait a minute.';
+    default:
+      return status >= 500 ? 'The server did not respond properly. Please try again in a minute.' : `Request failed (${status}).`;
+  }
+}
+
+async function requestVoid(path: string, init: RequestInit = {}): Promise<void> {
+  const token = await getAccessToken();
+  const headers = new Headers(init.headers);
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  if (init.body) headers.set('Content-Type', 'application/json');
+  const response = await fetch(path, { ...init, headers });
+  if (!response.ok) {
+    const problem = response.headers.get('content-type')?.includes('json')
+      ? ((await response.json()) as ProblemDetails)
+      : null;
+    throw new ApiError(response.status, problem);
+  }
+}
+
+function qs(params: Record<string, string | number | undefined>): string {
+  const parts = Object.entries(params)
+    .filter(([, v]) => v !== undefined && v !== '')
+    .map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`);
+  return parts.length ? `?${parts.join('&')}` : '';
+}
+
+async function request<T>(path: string, init: RequestInit = {}, signal?: AbortSignal): Promise<T> {
+  const token = await getAccessToken();
+  const headers = new Headers(init.headers);
+  headers.set('Accept', 'application/json');
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  if (init.body) headers.set('Content-Type', 'application/json');
+
+  const response = await fetch(path, { ...init, headers, signal });
+  if (!response.ok) {
+    const problem = response.headers.get('content-type')?.includes('json')
+      ? ((await response.json()) as ProblemDetails)
+      : null;
+    throw new ApiError(response.status, problem);
+  }
+  return (await response.json()) as T;
+}
+
+export const api = {
+  listVideos: (cursor?: string, signal?: AbortSignal) =>
+    request<VideoPage>(`/api/videos${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`, {}, signal),
+  getVideo: (id: string, signal?: AbortSignal) => request<Video>(`/api/videos/${encodeURIComponent(id)}`, {}, signal),
+  createUpload: (body: CreateUploadRequest) =>
+    request<CreateUploadResponse>('/api/videos', { method: 'POST', body: JSON.stringify(body) }),
+  /** 404 — the analysis has not been created yet: this is a “waiting” state, not an error. */
+  getDescription: async (videoId: string, signal?: AbortSignal): Promise<Description | null> => {
+    try {
+      return await request<Description>(`/api/videos/${encodeURIComponent(videoId)}/description`, {}, signal);
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) return null;
+      throw e;
+    }
+  },
+  getMe: (signal?: AbortSignal) => request<Profile>('/api/users/me', {}, signal),
+  updateMe: (body: UpdateProfileRequest) =>
+    request<Profile>('/api/users/me', { method: 'PUT', body: JSON.stringify(body) }),
+  getFeed: (cursor?: string, signal?: AbortSignal) =>
+    request<FeedPage>(`/api/feed${qs({ cursor, limit: 10 })}`, {}, signal),
+  getUserVideos: (id: string, cursor?: string, signal?: AbortSignal) =>
+    request<FeedPage>(`/api/users/${encodeURIComponent(id)}/videos${qs({ cursor, limit: 30 })}`, {}, signal),
+  deleteVideo: (id: string) => requestVoid(`/api/videos/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  getComments: (videoId: string, cursor?: string, signal?: AbortSignal) =>
+    request<CommentPage>(`/api/videos/${encodeURIComponent(videoId)}/comments${qs({ cursor, limit: 20 })}`, {}, signal),
+  addComment: (videoId: string, text: string) =>
+    request<Comment>(`/api/videos/${encodeURIComponent(videoId)}/comments`, {
+      method: 'POST',
+      body: JSON.stringify({ text }),
+    }),
+  deleteComment: (videoId: string, commentId: string) =>
+    requestVoid(`/api/videos/${encodeURIComponent(videoId)}/comments/${encodeURIComponent(commentId)}`, {
+      method: 'DELETE',
+    }),
+  getUser: (id: string, signal?: AbortSignal) => request<UserCard>(`/api/users/${encodeURIComponent(id)}`, {}, signal),
+  searchUsers: (query: string, signal?: AbortSignal) =>
+    request<{ items: UserSummary[] }>(`/api/users${qs({ query, limit: 20 })}`, {}, signal),
+  follow: (id: string) => requestVoid(`/api/users/${encodeURIComponent(id)}/follow`, { method: 'PUT' }),
+  unfollow: (id: string) => requestVoid(`/api/users/${encodeURIComponent(id)}/follow`, { method: 'DELETE' }),
+  completeUpload: (id: string) => request<Video>(`/api/videos/${encodeURIComponent(id)}/complete`, { method: 'POST' }),
+};
+
+/** Protected binary resource (poster) → object URL. Release via URL.revokeObjectURL. */
+export async function fetchObjectUrl(path: string, signal?: AbortSignal): Promise<string> {
+  const token = await getAccessToken();
+  const response = await fetch(path, { headers: token ? { Authorization: `Bearer ${token}` } : {}, signal });
+  if (!response.ok) throw new ApiError(response.status, null);
+  return URL.createObjectURL(await response.blob());
+}
+

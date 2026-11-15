@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+
+  <!-- Background analysis task: takes a video from the queue, takes "readings" with ffmpeg tools and writes a description.
+       Separate deployment: it needs ffmpeg, the API does not. -->
+  <PropertyGroup>
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Maksov.VideoService.Analysis.Bll\Maksov.VideoService.Analysis.Bll.csproj" />
+    <ProjectReference Include="..\Maksov.VideoService.Analysis.Dal\Maksov.VideoService.Analysis.Dal.csproj" />
+    <PackageReference Include="Maksov.VideoService.BuildingBlocks" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+    <PackageReference Include="Microsoft.Extensions.Http" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Maksov.VideoService.Analysis.Tests" />
+  </ItemGroup>
+
+</Project>

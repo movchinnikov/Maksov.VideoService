@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Primitives shared by all services: Result<T> and DomainError (business errors without exceptions). -->
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <PackageId>Maksov.VideoService.Primitives</PackageId>
+    <Description>Result and DomainError — a use-case result without exceptions.</Description>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+</Project>

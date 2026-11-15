@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Shared business logic (BLL): ports through which use cases access data and external systems. Knows nothing about ASP.NET, Postgres, MinIO. -->
+  <ItemGroup>
+    <ProjectReference Include="..\Maksov.VideoService.Videos.Domain\Maksov.VideoService.Videos.Domain.csproj" />
+  </ItemGroup>
+
+</Project>
+

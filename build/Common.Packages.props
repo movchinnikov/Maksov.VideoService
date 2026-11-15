@@ -1,0 +1,38 @@
+<Project>
+  <!-- Shared third-party package versions for all solutions. Imported from each solution's Directory.Packages.props. -->
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <CentralPackageFloatingVersionsEnabled>true</CentralPackageFloatingVersionsEnabled>
+    <!--
+      Shared libraries (libs/) reach services as NuGet packages from the local feed artifacts/nuget (make pack).
+      The version floats: make pack packs with the suffix local.<libs source hash> and cleans the feed, so the service picks up the latest.
+    -->
+    <VideoServiceLibsVersion>0.1.0-local.*</VideoServiceLibsVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Shared VideoService libraries (NuGet from the local feed) -->
+    <PackageVersion Include="Maksov.VideoService.Primitives" Version="$(VideoServiceLibsVersion)" />
+    <PackageVersion Include="Maksov.VideoService.BuildingBlocks" Version="$(VideoServiceLibsVersion)" />
+    <PackageVersion Include="Maksov.VideoService.Web" Version="$(VideoServiceLibsVersion)" />
+    <PackageVersion Include="Maksov.VideoService.TestSupport" Version="$(VideoServiceLibsVersion)" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Infrastructure -->
+    <PackageVersion Include="AWSSDK.S3" Version="4.1.0" />
+    <PackageVersion Include="Npgsql" Version="10.0.3" />
+    <PackageVersion Include="Npgsql.OpenTelemetry" Version="10.0.3" />
+    <PackageVersion Include="Dapper" Version="2.1.89" />
+    <PackageVersion Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="11.0.0" />
+    <PackageVersion Include="Microsoft.Extensions.Hosting" Version="11.0.0" />
+    <PackageVersion Include="Microsoft.Extensions.Http" Version="11.0.0" />
+    <PackageVersion Include="Yarp.ReverseProxy" Version="2.3.0" />
+    <!-- Observability -->
+    <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.21.0" />
+    <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.21.0" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.21.0" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.21.0" />
+    <!-- Tests -->
+    <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="11.0.0" />
+    <PackageVersion Include="xunit.v3" Version="4.0.3" />
+  </ItemGroup>
+</Project>

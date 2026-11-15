@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/analysis/">
+    <Project Path="Maksov.VideoService.Analysis.Bll/Maksov.VideoService.Analysis.Bll.csproj" />
+    <Project Path="Maksov.VideoService.Analysis.Dal/Maksov.VideoService.Analysis.Dal.csproj" />
+    <Project Path="Maksov.VideoService.Analysis.Features.Descriptions/Maksov.VideoService.Analysis.Features.Descriptions.csproj" />
+    <Project Path="Maksov.VideoService.Analysis.WebApi/Maksov.VideoService.Analysis.WebApi.csproj" />
+    <Project Path="Maksov.VideoService.Analysis.Worker/Maksov.VideoService.Analysis.Worker.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Maksov.VideoService.Analysis.Tests/Maksov.VideoService.Analysis.Tests.csproj" />
+  </Folder>
+</Solution>

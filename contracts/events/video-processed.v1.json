@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://videoservice.local/contracts/events/video-processed.v1.json",
+  "title": "video.processed.v1",
+  "description": "Video processed (status ready). Written to the videos service outbox in the same transaction as the status change; delivered to each subscriber (analysis, comments) as a separate row. Topic name: video.processed.v1; partition key: videoId. Compatibility: only adding optional fields. A subscriber reads the fields it needs (comments: videoId and ownerId).",
+  "type": "object",
+  "required": [
+    "eventId",
+    "occurredAt",
+    "schemaVersion",
+    "videoId",
+    "ownerId",
+    "sourceKey",
+    "durationMs",
+    "width",
+    "height"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "eventId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Event ID; the consumer deduplicates by it and by videoId."
+    },
+    "occurredAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Event time, UTC, ISO-8601."
+    },
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "traceId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "W3C trace id; may be absent."
+    },
+    "videoId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "ownerId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "Keycloak sub of the owner."
+    },
+    "sourceKey": {
+      "type": "string",
+      "pattern": "^uploads/[0-9a-f]{32}/source$",
+      "description": "Source key in MinIO: uploads/{videoId:N}/source."
+    },
+    "durationMs": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "width": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Width after applying rotation."
+    },
+    "height": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Height after applying rotation."
+    }
+  },
+  "examples": [
+    {
+      "eventId": "3f0c2c1e-8a41-4b5e-9a57-2f6a1c9d7e10",
+      "occurredAt": "2026-11-15T13:00:00Z",
+      "schemaVersion": 1,
+      "traceId": null,
+      "videoId": "0b7d3a52-6c1e-4f5a-8d2b-9e4f1a2c3b4d",
+      "ownerId": "c1b2a3d4-0000-4000-8000-000000000001",
+      "sourceKey": "uploads/0b7d3a526c1e4f5a8d2b9e4f1a2c3b4d/source",
+      "durationMs": 6000,
+      "width": 720,
+      "height": 1280
+    }
+  ]
+}

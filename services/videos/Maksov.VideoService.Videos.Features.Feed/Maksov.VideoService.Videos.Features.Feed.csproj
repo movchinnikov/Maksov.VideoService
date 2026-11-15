@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Feed feature: the follows feed (GetFeed) and a person's ready videos for the profile (ListUserVideos).
+       Depends on ports (Bll) and the shared web layer; does not depend on Dal, the host or other features. -->
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <Using Include="Microsoft.AspNetCore.Builder" />
+    <Using Include="Microsoft.AspNetCore.Http" />
+    <Using Include="Microsoft.AspNetCore.Routing" />
+    <Using Include="Microsoft.Extensions.Configuration" />
+    <Using Include="Microsoft.Extensions.DependencyInjection" />
+    <ProjectReference Include="..\Maksov.VideoService.Videos.Bll\Maksov.VideoService.Videos.Bll.csproj" />
+    <ProjectReference Include="..\Maksov.VideoService.Videos.Domain\Maksov.VideoService.Videos.Domain.csproj" />
+    <PackageReference Include="Maksov.VideoService.Web" />
+    <PackageReference Include="Maksov.VideoService.BuildingBlocks" />
+  </ItemGroup>
+
+</Project>

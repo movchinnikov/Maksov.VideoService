@@ -1,0 +1,6 @@
+{
+  "themes": [
+    { "name": "videoservice", "types": ["login"] }
+  ]
+}
+

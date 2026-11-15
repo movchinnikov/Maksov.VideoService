@@ -1,0 +1,322 @@
+# Lesson 1: web → gateway → services videos / users / analysis / comments (+ workers), Keycloak, MinIO, Postgres.
+# Run: make up (from the repository root). All resource limits and healthchecks are explicit.
+name: videoservice
+
+x-storage-env: &storage-env
+  Storage__ServiceUrl: http://minio:9000
+  Storage__PublicUrl: ${STORAGE_PUBLIC_URL}
+  Storage__AccessKey: ${MINIO_ROOT_USER}
+  Storage__SecretKey: ${MINIO_ROOT_PASSWORD}
+  Storage__Bucket: ${STORAGE_BUCKET}
+  OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+
+x-auth-env: &auth-env
+  Auth__Issuer: http://localhost:8080/realms/videoservice
+  Auth__MetadataAddress: http://keycloak:8080/realms/videoservice/.well-known/openid-configuration
+  Auth__Audience: videoservice-api
+
+services:
+  postgres:
+    image: postgres:18.7-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      VIDEOS_DB_PASSWORD: ${VIDEOS_DB_PASSWORD}
+      USERS_DB_PASSWORD: ${USERS_DB_PASSWORD}
+      ANALYSIS_DB_PASSWORD: ${ANALYSIS_DB_PASSWORD}
+      COMMENTS_DB_PASSWORD: ${COMMENTS_DB_PASSWORD}
+    command: ["postgres", "-c", "shared_buffers=128MB", "-c", "max_connections=100"]
+    ports: ["127.0.0.1:5433:5432"]
+    volumes:
+      - pg-data:/var/lib/postgresql
+      - ../postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 512M }
+
+  minio:
+    # Official MinIO images are no longer published to Docker Hub/Quay; we use the Chainguard build,
+    # pinned by digest (update deliberately, via PR). Can be overridden with the MINIO_IMAGE variable.
+    image: ${MINIO_IMAGE:-chainguard/minio@sha256:634c989a2f1029162fc2676c263caa181213b9410449968532f750a6fb77532d}
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      # The browser uploads files directly via presigned URL — allow only the web client origin.
+      MINIO_API_CORS_ALLOW_ORIGIN: ${WEB_ORIGINS}
+    ports: ["127.0.0.1:9000:9000", "127.0.0.1:9001:9001"]
+    volumes: [minio-data:/data]
+    healthcheck:
+      # The image has no curl/grep: HTTP request using bash.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /minio/health/live HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && read -r line <&3 && [[ $$line == *' 200 '* ]]"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 512M }
+
+  keycloak:
+    # Custom image: Keycloak 26.8.2 + phone login/registration provider and theme (deploy/keycloak).
+    build: { context: ../keycloak }
+    image: videoservice/keycloak:local
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_BOOTSTRAP_ADMIN_USERNAME}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_BOOTSTRAP_ADMIN_PASSWORD}
+      # Substituted into the demo user's password in the realm import (${DEMO_PASSWORD} placeholder).
+      DEMO_PASSWORD: ${DEMO_PASSWORD}
+      # The browser sees Keycloak as localhost:8080, services as keycloak:8080.
+      # backchannel-dynamic: discovery/JWKS for internal requests are served at the request address.
+      KC_HOSTNAME: http://localhost:8080
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+      KC_HTTP_ENABLED: "true"
+      KC_HEALTH_ENABLED: "true"
+      JAVA_OPTS_KC_HEAP: "-XX:MaxRAMPercentage=65 -XX:InitialRAMPercentage=25"
+    ports: ["127.0.0.1:8080:8080"]
+    volumes:
+      - ../keycloak/realm-videoservice.json:/opt/keycloak/data/import/realm-videoservice.json:ro
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && read -r line <&3 && [[ $$line == *' 200 '* ]]"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    deploy:
+      resources:
+        limits: { cpus: "1.5", memory: 1G }
+
+  # ---------------- videos: upload, transcoding, stream delivery ----------------
+  # One-shot: SQL migrations of the videos database and bucket creation. Same image as the service.
+  videos-migrator:
+    build: { context: ../.., dockerfile: services/videos/Dockerfile }
+    image: videoservice/videos:local
+    command: ["--migrate"]
+    environment:
+      <<: *storage-env
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=videos;Username=videos;Password=${VIDEOS_DB_PASSWORD}
+    depends_on:
+      postgres: { condition: service_healthy }
+      minio: { condition: service_healthy }
+    healthcheck:
+      disable: true
+    restart: "no"
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 256M }
+
+  videos:
+    image: videoservice/videos:local
+    environment:
+      <<: [*storage-env, *auth-env]
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=videos;Username=videos;Password=${VIDEOS_DB_PASSWORD}
+      Upload__MaxBytes: ${UPLOAD_MAX_BYTES}
+      # The feed is built from subscriptions in the users service (internal call with a key).
+      Users__BaseUrl: http://users:8080
+      Users__InternalApiKey: ${INTERNAL_API_KEY}
+    depends_on:
+      videos-migrator: { condition: service_completed_successfully }
+      keycloak: { condition: service_healthy }
+    read_only: true
+    tmpfs: [/tmp:size=32m]
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 256M }
+
+  media-worker:
+    build: { context: ../.., dockerfile: services/videos/Dockerfile.worker }
+    image: videoservice/media-worker:local
+    environment:
+      <<: *storage-env
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=videos;Username=videos;Password=${VIDEOS_DB_PASSWORD}
+      Transcode__Threads: ${TRANSCODE_THREADS}
+      Transcode__MaxConcurrentJobs: ${TRANSCODE_MAX_CONCURRENT_JOBS}
+      Transcode__MaxDurationSeconds: ${TRANSCODE_MAX_DURATION_SECONDS}
+      # Delivery of "video processed/deleted" events to subscribers (outbox → HTTP; in lesson 4 — Kafka).
+      Outbox__Subscribers__analysis__BaseUrl: http://analysis:8080
+      Outbox__Subscribers__comments__BaseUrl: http://comments:8080
+      Internal__ApiKey: ${INTERNAL_API_KEY}
+    depends_on:
+      videos-migrator: { condition: service_completed_successfully }
+    read_only: true
+    tmpfs: [/tmp:size=16m]
+    volumes: [worker-scratch:/work]
+    stop_grace_period: 40s
+    deploy:
+      resources:
+        limits: { cpus: "2.0", memory: 1536M }
+
+  # ---------------- users: profiles ----------------
+  users-migrator:
+    build: { context: ../.., dockerfile: services/users/Dockerfile }
+    image: videoservice/users:local
+    command: ["--migrate"]
+    environment:
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=users;Username=users;Password=${USERS_DB_PASSWORD}
+    depends_on:
+      postgres: { condition: service_healthy }
+    healthcheck:
+      disable: true
+    restart: "no"
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 192M }
+
+  users:
+    image: videoservice/users:local
+    environment:
+      <<: *auth-env
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=users;Username=users;Password=${USERS_DB_PASSWORD}
+      Internal__ApiKey: ${INTERNAL_API_KEY}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+    depends_on:
+      users-migrator: { condition: service_completed_successfully }
+      keycloak: { condition: service_healthy }
+    read_only: true
+    tmpfs: [/tmp:size=16m]
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 192M }
+
+  # ---------------- comments: video comments ----------------
+  comments-migrator:
+    build: { context: ../.., dockerfile: services/comments/Dockerfile }
+    image: videoservice/comments:local
+    command: ["--migrate"]
+    environment:
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=comments;Username=comments;Password=${COMMENTS_DB_PASSWORD}
+    depends_on:
+      postgres: { condition: service_healthy }
+    healthcheck:
+      disable: true
+    restart: "no"
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 192M }
+
+  comments:
+    image: videoservice/comments:local
+    environment:
+      <<: *auth-env
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=comments;Username=comments;Password=${COMMENTS_DB_PASSWORD}
+      Internal__ApiKey: ${INTERNAL_API_KEY}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+    depends_on:
+      comments-migrator: { condition: service_completed_successfully }
+      keycloak: { condition: service_healthy }
+    read_only: true
+    tmpfs: [/tmp:size=16m]
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 192M }
+
+  # ---------------- analysis: description of what is in the video ----------------
+  analysis-migrator:
+    build: { context: ../.., dockerfile: services/analysis/Dockerfile }
+    image: videoservice/analysis:local
+    command: ["--migrate"]
+    environment:
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=analysis;Username=analysis;Password=${ANALYSIS_DB_PASSWORD}
+    depends_on:
+      postgres: { condition: service_healthy }
+    healthcheck:
+      disable: true
+    restart: "no"
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 192M }
+
+  analysis:
+    image: videoservice/analysis:local
+    environment:
+      <<: *auth-env
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=analysis;Username=analysis;Password=${ANALYSIS_DB_PASSWORD}
+      Internal__ApiKey: ${INTERNAL_API_KEY}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+    depends_on:
+      analysis-migrator: { condition: service_completed_successfully }
+      keycloak: { condition: service_healthy }
+    read_only: true
+    tmpfs: [/tmp:size=16m]
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 256M }
+
+  analysis-worker:
+    build: { context: ../.., dockerfile: services/analysis/Dockerfile.worker }
+    image: videoservice/analysis-worker:local
+    environment:
+      <<: *storage-env
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=analysis;Username=analysis;Password=${ANALYSIS_DB_PASSWORD}
+      Analysis__Captioner__Provider: ${ANALYSIS_CAPTIONER:-none}
+      Analysis__Captioner__Endpoint: http://ollama:11434
+      Analysis__Captioner__Model: ${OLLAMA_MODEL:-moondream}
+    depends_on:
+      analysis-migrator: { condition: service_completed_successfully }
+    read_only: true
+    tmpfs: [/tmp:size=16m]
+    volumes: [analysis-scratch:/work]
+    stop_grace_period: 40s
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 768M }
+
+  # Local vision model for frame captioning. Does not start by default (profile ml): make up-ml.
+  ollama:
+    image: ollama/ollama:0.40.16
+    profiles: [ml]
+    volumes: [ollama-data:/root/.ollama]
+    ports: ["127.0.0.1:11434:11434"]
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    deploy:
+      resources:
+        limits: { cpus: "4.0", memory: 4G }
+
+  # ---------------- gateway: single entry point for clients ----------------
+  gateway:
+    build: { context: ../.., dockerfile: services/gateway/Dockerfile }
+    image: videoservice/gateway:local
+    environment:
+      <<: *auth-env
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+    ports: ["127.0.0.1:8081:8080"]
+    depends_on:
+      videos: { condition: service_healthy }
+      users: { condition: service_healthy }
+      analysis: { condition: service_healthy }
+      comments: { condition: service_healthy }
+      keycloak: { condition: service_healthy }
+    read_only: true
+    tmpfs: [/tmp:size=16m]
+    deploy:
+      resources:
+        limits: { cpus: "0.75", memory: 192M }
+
+  web:
+    build: { context: ../../clients/web }
+    image: videoservice/web:local
+    ports: ["127.0.0.1:3000:8080"]
+    depends_on:
+      gateway: { condition: service_healthy }
+    read_only: true
+    tmpfs: [/tmp:size=16m]
+    deploy:
+      resources:
+        limits: { cpus: "0.25", memory: 64M }
+
+volumes:
+  pg-data:
+  minio-data:
+  worker-scratch:
+  analysis-scratch:
+  ollama-data:

@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <Description>VideoService video domain: statuses and transitions, upload policy, ABR ladder, storage key layout.</Description>
+    <PackageTags>videoservice;video;abr;dash;hls</PackageTags>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Maksov.VideoService.Primitives" />
+  </ItemGroup>
+
+</Project>
+
