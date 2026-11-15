@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Feed service adapters: HTTP clients of the friends and videos services (internal API, X-Internal-Key). No database. -->
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <ProjectReference Include="..\Maksov.VideoService.Feed.Bll\Maksov.VideoService.Feed.Bll.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Maksov.VideoService.Feed.Tests" />
+  </ItemGroup>
+
+</Project>

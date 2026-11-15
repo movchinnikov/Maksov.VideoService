@@ -75,6 +75,20 @@ internal sealed class PostgresVideoRepository(NpgsqlDataSource dataSource) : IVi
         return rows.Select(static r => r.ToRecord()).ToList();
     }
 
+    public async Task<IReadOnlyList<VideoRecord>> GetReadyByIdsAsync(IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(ids);
+        if (ids.Count == 0)
+        {
+            return [];
+        }
+
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        var rows = await connection.QueryAsync<Row>(new CommandDefinition(
+            $"select {SelectColumns} from videos where id = any(@ids) and status = 'ready'", new { ids = ids.ToArray() }, cancellationToken: cancellationToken));
+        return rows.Select(static r => r.ToRecord()).ToList();
+    }
+
     public async Task<IReadOnlyList<VideoRecord>> ListReadyByOwnersAsync(
         IReadOnlyCollection<string> ownerIds, PageCursor? after, int limit, CancellationToken cancellationToken)
     {

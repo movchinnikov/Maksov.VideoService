@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/friends/">
+    <Project Path="Maksov.VideoService.Friends.Bll/Maksov.VideoService.Friends.Bll.csproj" />
+    <Project Path="Maksov.VideoService.Friends.Dal/Maksov.VideoService.Friends.Dal.csproj" />
+    <Project Path="Maksov.VideoService.Friends.Features.Friends/Maksov.VideoService.Friends.Features.Friends.csproj" />
+    <Project Path="Maksov.VideoService.Friends.WebApi/Maksov.VideoService.Friends.WebApi.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Maksov.VideoService.Friends.Tests/Maksov.VideoService.Friends.Tests.csproj" />
+  </Folder>
+</Solution>

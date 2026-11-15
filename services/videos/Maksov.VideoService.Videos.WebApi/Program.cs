@@ -3,7 +3,7 @@ using Maksov.VideoService.BuildingBlocks.Observability;
 using Maksov.VideoService.BuildingBlocks.Postgres;
 using Maksov.VideoService.BuildingBlocks.Storage;
 using Maksov.VideoService.Videos.Dal;
-using Maksov.VideoService.Videos.Features.Feed;
+using Maksov.VideoService.Videos.Features.Catalog;
 using Maksov.VideoService.Videos.Features.Videos;
 using Maksov.VideoService.Videos.WebApi;
 using Maksov.VideoService.Web;
@@ -32,16 +32,17 @@ builder.Services.AddProblemDetails();
 builder.Services.AddPostgres(builder.Configuration, "videoservice-api");
 builder.Services.AddSingleton<SqlMigrator>();
 builder.Services.AddS3ObjectStorage(builder.Configuration);
-builder.Services.AddDal(builder.Configuration);
+builder.Services.AddDal();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddMemoryCache(static o => o.SizeLimit = 10_000);
 
 // Authorization: Keycloak JWT (verified both here and at the gateway: zero trust). External SSO and phone login are configured in Keycloak.
 builder.AddKeycloakJwtAuthentication();
+builder.Services.AddInternalApiKey(builder.Configuration);
 
 // Features (vertical slices in separate assemblies)
 builder.Services.AddVideoFeatures(builder.Configuration);
-builder.Services.AddFeedFeatures();
+builder.Services.AddCatalogFeatures();
 
 var app = builder.Build();
 
@@ -69,7 +70,9 @@ app.MapGet("/", () => TypedResults.Ok(new ServiceInfo(
 app.MapGroup("/api")
     .RequireAuthorization()
     .MapVideoFeatures()
-    .MapFeedFeatures();
+    .MapCatalogFeatures();
+
+app.MapCatalogInternalFeatures();
 
 await app.RunAsync();
 return 0;

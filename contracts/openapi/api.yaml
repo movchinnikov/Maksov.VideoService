@@ -1,19 +1,21 @@
 openapi: 3.1.0
 info:
   title: VideoService API
-  version: 0.3.0
+  version: 0.5.0
   description: |
     Public API exposed through the gateway (`http://localhost:8081`). The gateway validates the JWT and routes:
-    `GET /api/videos/{id}/description` → analysis; `/api/videos/{id}/comments/**` → comments; `GET /api/feed`,
-    `GET /api/users/{id}/videos`, `/api/videos/**` → videos; `/api/users/**` → users.
+    `GET /api/videos/{id}/description` → analysis; `/api/videos/{id}/comments/**` → comments; `GET /api/feed` → feed;
+    `PUT|DELETE /api/users/{id}/follow` and `/api/friends/**` (stats, status, followers, following, recommendations) → friends; `GET /api/users/{id}/videos`, `/api/videos/**`
+    (including `GET /api/videos/cards`) → videos; `/api/users/**` → users.
     Internal endpoints (`/internal/**`) are not published through the gateway (404); see `internal-analysis.yaml`,
-    `internal-comments.yaml`, `internal-users.yaml`.
+    `internal-comments.yaml`, `internal-users.yaml`, `internal-friends.yaml`, `internal-videos.yaml`.
 
     Lesson 1: video upload (vertical 9:16 is the target, horizontal is supported), processing status,
-    own video list, DASH/HLS playback, video description, profiles, follows, people search, feed, comments, deletion.
+    own video list, DASH/HLS playback, video description, profiles, follows and recommended friends, people search,
+    feed (a page of video ids) and video cards, comments, deletion.
     All endpoints require a Keycloak JWT (realm `videoservice`, audience `videoservice-api`).
 
-    Visibility: **`ready` videos are visible to any authenticated user** (get, stream, poster, feed, profile grid).
+    Visibility: **`ready` videos are visible to any authenticated user** (get, stream, poster, cards, feed, profile grid).
     A video in any other status is visible only to its owner; for everyone else it is indistinguishable from a nonexistent one (404), as is a deleted video.
     Description: the owner sees any status; others see only `done`.
 servers:
@@ -25,6 +27,7 @@ tags:
   - name: Descriptions
   - name: Users
   - name: Feed
+  - name: Friends
   - name: Comments
 paths:
   /api/videos:
@@ -222,17 +225,45 @@ paths:
     get:
       tags: [Feed]
       operationId: GetFeed
-      summary: "Feed: ready videos from people the user follows, plus their own; newest first"
-      description: Follows are fetched from the users service (20 s cache). If users is unavailable, the feed shows only the user's own videos.
+      summary: "Feed: ids of ready videos from people the user follows, plus their own; newest first"
+      description: |
+        Returns video ids only; load the cards with `GET /api/videos/cards?ids=` (keep the order).
+        The feed service takes follows from the friends service (20 s cache). If friends is unavailable, the feed degrades to the
+        user's own videos; if videos is unavailable the call fails with 503.
       parameters:
         - { name: cursor, in: query, schema: { type: string, maxLength: 64 } }
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 30, default: 12 } }
       responses:
         '200':
-          description: Feed page
+          description: A page of video ids
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/FeedPage' }
+              schema: { $ref: '#/components/schemas/FeedIdsPage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503':
+          description: Videos service unavailable
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+  /api/videos/cards:
+    get:
+      tags: [Feed]
+      operationId: GetVideoCards
+      summary: Cards for a list of video ids
+      description: Returns cards of **ready** videos only, in the requested order; unknown, not ready and deleted ids are skipped. Up to 30 ids (400 if more).
+      parameters:
+        - name: ids
+          in: query
+          required: true
+          description: Comma-separated video ids (UUID), at most 30
+          schema: { type: string }
+      responses:
+        '200':
+          description: Cards
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CardsResponse' }
+        '400': { $ref: '#/components/responses/ValidationProblem' }
         '401': { $ref: '#/components/responses/Unauthorized' }
   /api/users/{id}/videos:
     get:
@@ -258,10 +289,13 @@ paths:
     get:
       tags: [Users]
       operationId: SearchUsers
-      summary: Search people by username or display name prefix
-      description: Case-insensitive; the caller is excluded from results; an empty query returns an empty list; the query is truncated to 60 characters.
+      summary: Search people by username or display name prefix, or look up profiles by ids
+      description: |
+        `query`: case-insensitive prefix search; the caller is excluded from results; an empty query returns an empty list; the query is truncated to 60 characters.
+        `ids`: comma-separated user ids (at most 50) — batch lookup of summaries, used to render the feed, recommendations and follow lists.
       parameters:
         - { name: query, in: query, schema: { type: string, maxLength: 60 } }
+        - { name: ids, in: query, schema: { type: string }, description: 'Comma-separated user ids, at most 50' }
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
       responses:
         '200':
@@ -272,10 +306,10 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
   /api/users/{id}/follow:
     put:
-      tags: [Users]
+      tags: [Friends]
       operationId: Follow
-      summary: Follow (idempotent)
-      description: Following yourself is not allowed (400); an unknown user returns 404.
+      summary: Follow (idempotent; served by the friends service)
+      description: Following yourself is not allowed (400); a user without a profile returns 404; if the users service cannot confirm the profile, 503.
       parameters:
         - { name: id, in: path, required: true, schema: { type: string, maxLength: 128 } }
       responses:
@@ -283,14 +317,103 @@ paths:
         '400': { $ref: '#/components/responses/ValidationProblem' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503':
+          description: Profile lookup temporarily unavailable
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
     delete:
-      tags: [Users]
+      tags: [Friends]
       operationId: Unfollow
-      summary: Unfollow (idempotent)
+      summary: Unfollow (idempotent; served by the friends service)
       parameters:
         - { name: id, in: path, required: true, schema: { type: string, maxLength: 128 } }
       responses:
         '204': { description: Follow does not exist }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/friends/{id}/stats:
+    get:
+      tags: [Friends]
+      operationId: GetFriendStats
+      summary: Follower and following counts of a person and the relation between the caller and that person
+      description: '`isFollowing` — the caller follows the person; `followsYou` — the person follows the caller; `isMutual` — both (they follow each other).'
+      parameters:
+        - { name: id, in: path, required: true, description: User ID (Keycloak `sub`), schema: { type: string, maxLength: 128 } }
+      responses:
+        '200':
+          description: Counters
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FriendStats' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/friends/{id}/followers:
+    get:
+      tags: [Friends]
+      operationId: ListFollowers
+      summary: People who follow the given user (newest follow first)
+      description: |
+        Visible to any authenticated user, like profiles. Keyset pagination (`cursor` from `nextCursor`; a malformed cursor is ignored and the first page is returned).
+        Flags are relative to the caller: `isFollowing` (the caller follows this person), `followsYou` (this person follows the caller), `isMutual` (both).
+        Render names with `GET /api/users?ids=`.
+      parameters:
+        - { name: id, in: path, required: true, description: User ID (Keycloak `sub`), schema: { type: string, maxLength: 128 } }
+        - { name: cursor, in: query, schema: { type: string, maxLength: 128 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
+      responses:
+        '200':
+          description: A page of followers
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RelationPage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/friends/{id}/following:
+    get:
+      tags: [Friends]
+      operationId: ListFollowing
+      summary: People the given user follows (newest follow first)
+      description: Same shape, visibility, pagination and relation flags as the followers list.
+      parameters:
+        - { name: id, in: path, required: true, description: User ID (Keycloak `sub`), schema: { type: string, maxLength: 128 } }
+        - { name: cursor, in: query, schema: { type: string, maxLength: 128 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
+      responses:
+        '200':
+          description: A page of followed people
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RelationPage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/friends/status:
+    get:
+      tags: [Friends]
+      operationId: GetFollowStatus
+      summary: Relation of the caller to the given users — whom the caller follows and who follows the caller
+      parameters:
+        - { name: ids, in: query, required: true, description: 'Comma-separated user ids, at most 50 (extra ids are ignored)', schema: { type: string } }
+      responses:
+        '200':
+          description: Ids among the requested that the caller follows (`following`) and that follow the caller (`followedBy`); ids in both lists are mutual
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FollowStatus' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/friends/recommendations:
+    get:
+      tags: [Friends]
+      operationId: GetRecommendedFriends
+      summary: Recommended friends — friends of friends ranked by graph-embedding similarity
+      description: |
+        Candidates are people followed by the people the caller follows, excluding the caller and people already followed.
+        Ordered by cosine similarity of graph embeddings (baseline `graph-hash-v1`, pgvector) and then by mutual friends.
+        Each item carries only the id and ranking data; render names with `GET /api/users?ids=`.
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 30, default: 10 } }
+      responses:
+        '200':
+          description: Recommendations
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Recommendations' }
         '401': { $ref: '#/components/responses/Unauthorized' }
   /api/users/me:
     get:
@@ -327,7 +450,7 @@ paths:
       tags: [Users]
       operationId: GetProfile
       summary: User profile
-      description: 'Public profile (Instagram-style): username, display name, bio, follower and following counts, and an "is followed by you" flag.'
+      description: 'Public profile: username, display name, bio. Counters and the follow flag are served by `GET /api/friends/{id}/stats`.'
       parameters:
         - name: id
           in: path
@@ -441,40 +564,77 @@ components:
         updatedAt: { type: string, format: date-time }
     Profile:
       type: object
-      required: [id, username, displayName, bio, createdAt, followersCount, followingCount]
+      required: [id, username, displayName, bio, createdAt]
       properties:
         id: { type: string, description: Keycloak sub }
         username: { type: string }
         displayName: { type: string, minLength: 1, maxLength: 60 }
         bio: { type: string, maxLength: 300 }
         createdAt: { type: string, format: date-time }
-        followersCount: { type: integer }
-        followingCount: { type: integer }
     PublicProfile:
       type: object
-      required: [id, username, displayName, bio, followersCount, followingCount, isFollowing]
+      required: [id, username, displayName, bio]
       properties:
         id: { type: string }
         username: { type: string }
         displayName: { type: string }
         bio: { type: string }
-        followersCount: { type: integer }
-        followingCount: { type: integer }
-        isFollowing: { type: boolean, description: Whether the caller follows this person }
     UserSummary:
       type: object
-      required: [id, username, displayName, bio, isFollowing]
+      required: [id, username, displayName, bio]
       properties:
         id: { type: string }
         username: { type: string }
         displayName: { type: string }
         bio: { type: string }
-        isFollowing: { type: boolean }
     UserSearchResponse:
       type: object
       required: [items]
       properties:
         items: { type: array, items: { $ref: '#/components/schemas/UserSummary' } }
+    FriendStats:
+      type: object
+      required: [followersCount, followingCount, isFollowing, followsYou, isMutual]
+      properties:
+        followersCount: { type: integer }
+        followingCount: { type: integer }
+        isFollowing: { type: boolean, description: Whether the caller follows this person }
+        followsYou: { type: boolean, description: Whether this person follows the caller }
+        isMutual: { type: boolean, description: Both follow each other }
+    FollowStatus:
+      type: object
+      required: [following, followedBy]
+      properties:
+        following: { type: array, items: { type: string }, description: User ids from the request that the caller follows }
+        followedBy: { type: array, items: { type: string }, description: User ids from the request that follow the caller }
+    RelationItem:
+      type: object
+      required: [userId, followedAt, isFollowing, followsYou, isMutual]
+      properties:
+        userId: { type: string }
+        followedAt: { type: string, format: date-time, description: When the follow was created }
+        isFollowing: { type: boolean, description: The caller follows this person }
+        followsYou: { type: boolean, description: This person follows the caller }
+        isMutual: { type: boolean, description: Both follow each other }
+    RelationPage:
+      type: object
+      required: [items, nextCursor, total]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/RelationItem' } }
+        nextCursor: { type: [string, 'null'] }
+        total: { type: integer, description: Total followers (or following) of the person }
+    Recommendation:
+      type: object
+      required: [userId, mutualFriends, similarity]
+      properties:
+        userId: { type: string }
+        mutualFriends: { type: integer, description: Number of the caller's friends who follow this person }
+        similarity: { type: number, description: Cosine similarity of graph embeddings }
+    Recommendations:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Recommendation' } }
     FeedItem:
       type: object
       required: [id, title, ownerId, ownerUsername, createdAt, durationMs, width, height, playback]
@@ -488,6 +648,17 @@ components:
         width: { type: integer }
         height: { type: integer }
         playback: { $ref: '#/components/schemas/Playback' }
+    FeedIdsPage:
+      type: object
+      required: [ids, nextCursor]
+      properties:
+        ids: { type: array, items: { type: string, format: uuid } }
+        nextCursor: { type: [string, 'null'] }
+    CardsResponse:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/FeedItem' } }
     FeedPage:
       type: object
       required: [items, nextCursor]

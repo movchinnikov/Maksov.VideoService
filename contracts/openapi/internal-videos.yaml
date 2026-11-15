@@ -1,0 +1,59 @@
+openapi: 3.1.0
+info:
+  title: VideoService Videos (internal)
+  version: 0.1.0
+  description: |
+    Internal API of the videos service (ADR 0010). Reachable only by other services inside the compose network
+    (`http://videos:8080`), protected by the `X-Internal-Key` header (`INTERNAL_API_KEY`). Not published through the gateway (404).
+    Public routes of the service (`/api/videos/**`, `GET /api/videos/cards`, `GET /api/users/{id}/videos`) are described in `api.yaml`.
+    Events delivered by videos to other services are described by `contracts/events/*.json` and the receivers' internal contracts.
+servers:
+  - url: http://videos:8080
+security:
+  - internalKey: []
+tags:
+  - name: Internal
+paths:
+  /internal/v1/videos/ready-by-owners:
+    post:
+      tags: [Internal]
+      operationId: ReadyByOwners
+      summary: Ids of the newest ready videos of the given owners
+      description: |
+        Consumed by the feed service. Returns ids only, newest first, with a keyset cursor. At most 2000 owner ids are used (extra ids are ignored);
+        `limit` is clamped to 1..30 (default 12). Not ready and deleted videos are never returned.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ownerIds]
+              properties:
+                ownerIds: { type: array, items: { type: string } }
+                cursor: { type: [string, 'null'], description: Opaque cursor from `nextCursor` }
+                limit: { type: [integer, 'null'], minimum: 1, maximum: 30, default: 12 }
+      responses:
+        '200':
+          description: A page of video ids
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [id]
+                      properties:
+                        id: { type: string, format: uuid }
+                  nextCursor: { type: [string, 'null'] }
+        '401': { description: Missing or invalid `X-Internal-Key` }
+components:
+  securitySchemes:
+    internalKey:
+      type: apiKey
+      in: header
+      name: X-Internal-Key

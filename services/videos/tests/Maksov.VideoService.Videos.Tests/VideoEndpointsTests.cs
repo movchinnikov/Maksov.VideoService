@@ -179,32 +179,79 @@ public sealed class VideoEndpointsTests : IClassFixture<ApiFactory>
     }
 
     [Fact]
-    public async Task AC_feed_01_shows_ready_videos_of_followed_authors_and_own()
+    public async Task AC_feed_01_cards_return_ready_videos_in_the_requested_order()
     {
-        var me = $"mia-{Guid.NewGuid():N}";
-        var friend = $"fred-{Guid.NewGuid():N}";
-        var stranger = $"sam-{Guid.NewGuid():N}";
-        _factory.Following.Set(me, friend);
-        using var mine = _factory.ClientFor(me);
-        using var friendClient = _factory.ClientFor(friend);
-        using var strangerClient = _factory.ClientFor(stranger);
-        var own = await CreateAsync(mine);
-        var friends = await CreateAsync(friendClient);
-        var friendsDraft = await CreateAsync(friendClient);
-        var strangers = await CreateAsync(strangerClient);
-        foreach (var id in new[] { own, friends, strangers })
+        using var viewer = _factory.ClientFor($"vic-{Guid.NewGuid():N}");
+        using var author = _factory.ClientFor($"aut-{Guid.NewGuid():N}");
+        var first = await CreateAsync(author);
+        var second = await CreateAsync(author);
+        var draft = await CreateAsync(author);
+        _factory.Videos.MarkReady(first, "[]");
+        _factory.Videos.MarkReady(second, "[]");
+        var unknown = Guid.NewGuid();
+
+        var cards = await viewer.GetFromJsonAsync<JsonElement>($"/api/videos/cards?ids={second},{unknown},{draft},{first}", Json, Ct);
+        using var bad = await viewer.GetAsync("/api/videos/cards?ids=not-a-guid", Ct);
+        using var tooMany = await viewer.GetAsync($"/api/videos/cards?ids={string.Join(',', Enumerable.Range(0, 31).Select(_ => Guid.NewGuid()))}", Ct);
+
+        Assert.Equal([second, first], cards.GetProperty("items").EnumerateArray().Select(i => i.GetProperty("id").GetGuid()));
+        Assert.EndsWith("/stream/manifest.mpd", cards.GetProperty("items")[0].GetProperty("playback").GetProperty("dash").GetString(), StringComparison.Ordinal);
+        Assert.Equal(HttpStatusCode.BadRequest, bad.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, tooMany.StatusCode);
+    }
+
+    [Fact]
+    public async Task AC_feed_02_profile_grid_lists_ready_videos_of_one_author()
+    {
+        var author = $"grid-{Guid.NewGuid():N}";
+        using var authorClient = _factory.ClientFor(author);
+        using var viewer = _factory.ClientFor($"vw-{Guid.NewGuid():N}");
+        var ready = await CreateAsync(authorClient);
+        await CreateAsync(authorClient);
+        _factory.Videos.MarkReady(ready, "[]");
+
+        var grid = await viewer.GetFromJsonAsync<JsonElement>($"/api/users/{author}/videos", Json, Ct);
+
+        Assert.Equal([ready], grid.GetProperty("items").EnumerateArray().Select(i => i.GetProperty("id").GetGuid()));
+    }
+
+    [Fact]
+    public async Task AC_feed_03_internal_ready_by_owners_requires_the_key_and_pages_by_cursor()
+    {
+        var owner = $"own-{Guid.NewGuid():N}";
+        using var ownerClient = _factory.ClientFor(owner);
+        var ids = new List<Guid>();
+        for (var i = 0; i < 3; i++)
         {
+            var id = await CreateAsync(ownerClient);
             _factory.Videos.MarkReady(id, "[]");
+            ids.Add(id);
+            await Task.Delay(5, Ct);
         }
 
-        var feed = await mine.GetFromJsonAsync<JsonElement>("/api/feed", Json, Ct);
-        var ids = feed.GetProperty("items").EnumerateArray().Select(i => i.GetProperty("id").GetGuid()).ToHashSet();
-        var profile = await mine.GetFromJsonAsync<JsonElement>($"/api/users/{stranger}/videos", Json, Ct);
-        var profileIds = profile.GetProperty("items").EnumerateArray().Select(i => i.GetProperty("id").GetGuid()).ToList();
+        using var anonymous = _factory.CreateClient();
 
-        Assert.Equal(new HashSet<Guid> { own, friends }, ids);
-        Assert.DoesNotContain(friendsDraft, ids);
-        Assert.Equal([strangers], profileIds);
+        HttpRequestMessage Post(object body, string? key)
+        {
+            var request = new HttpRequestMessage(HttpMethod.Post, "/internal/v1/videos/ready-by-owners") { Content = JsonContent.Create(body) };
+            if (key is not null)
+            {
+                request.Headers.Add("X-Internal-Key", key);
+            }
+            return request;
+        }
+
+        using var denied = await anonymous.SendAsync(Post(new { ownerIds = new[] { owner }, limit = 2 }, null), Ct);
+        using var page1Response = await anonymous.SendAsync(Post(new { ownerIds = new[] { owner }, limit = 2 }, ApiFactory.InternalKey), Ct);
+        var page1 = await page1Response.Content.ReadFromJsonAsync<JsonElement>(Json, Ct);
+        var cursor = page1.GetProperty("nextCursor").GetString();
+        using var page2Response = await anonymous.SendAsync(Post(new { ownerIds = new[] { owner }, limit = 2, cursor }, ApiFactory.InternalKey), Ct);
+        var page2 = await page2Response.Content.ReadFromJsonAsync<JsonElement>(Json, Ct);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, denied.StatusCode);
+        Assert.Equal([ids[2], ids[1]], page1.GetProperty("items").EnumerateArray().Select(i => i.GetProperty("id").GetGuid()));
+        Assert.Equal([ids[0]], page2.GetProperty("items").EnumerateArray().Select(i => i.GetProperty("id").GetGuid()));
+        Assert.Equal(JsonValueKind.Null, page2.GetProperty("nextCursor").ValueKind);
     }
 
     [Theory]

@@ -3,7 +3,7 @@
     <Project Path="Maksov.VideoService.Videos.Bll/Maksov.VideoService.Videos.Bll.csproj" />
     <Project Path="Maksov.VideoService.Videos.Dal/Maksov.VideoService.Videos.Dal.csproj" />
     <Project Path="Maksov.VideoService.Videos.Domain/Maksov.VideoService.Videos.Domain.csproj" />
-    <Project Path="Maksov.VideoService.Videos.Features.Feed/Maksov.VideoService.Videos.Features.Feed.csproj" />
+    <Project Path="Maksov.VideoService.Videos.Features.Catalog/Maksov.VideoService.Videos.Features.Catalog.csproj" />
     <Project Path="Maksov.VideoService.Videos.Features.Videos/Maksov.VideoService.Videos.Features.Videos.csproj" />
     <Project Path="Maksov.VideoService.Videos.MediaWorker/Maksov.VideoService.Videos.MediaWorker.csproj" />
     <Project Path="Maksov.VideoService.Videos.WebApi/Maksov.VideoService.Videos.WebApi.csproj" />

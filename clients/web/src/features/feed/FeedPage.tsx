@@ -16,13 +16,20 @@ type State =
   | { kind: 'error'; message: string }
   | { kind: 'loaded'; items: FeedItem[]; nextCursor: string | null; loadingMore: boolean };
 
+/** Feed returns ids; cards are fetched in a second call (order preserved, missing ids skipped). */
+async function loadFeedPage(cursor?: string, signal?: AbortSignal): Promise<{ items: FeedItem[]; nextCursor: string | null }> {
+  const page = await api.getFeed(cursor, signal);
+  const cards = await api.getCards(page.ids, signal);
+  return { items: cards.items, nextCursor: page.nextCursor };
+}
+
 export function FeedPage() {
   const [state, setState] = useState<State>({ kind: 'loading' });
   const [activeId, setActiveId] = useState<string | null>(null);
   const me = useMe();
 
   const load = useCallback((signal?: AbortSignal) => {
-    api.getFeed(undefined, signal).then(
+    loadFeedPage(undefined, signal).then(
       (page) => setState({ kind: 'loaded', items: page.items, nextCursor: page.nextCursor, loadingMore: false }),
       (e: unknown) => {
         if (!signal?.aborted) setState({ kind: 'error', message: e instanceof ApiError ? e.message : 'Could not reach the server.' });
@@ -40,7 +47,7 @@ export function FeedPage() {
     if (state.kind !== 'loaded' || !state.nextCursor || state.loadingMore) return;
     const { items, nextCursor } = state;
     setState({ ...state, loadingMore: true });
-    api.getFeed(nextCursor).then(
+    loadFeedPage(nextCursor).then(
       (page) => setState({ kind: 'loaded', items: mergePages(items, page.items), nextCursor: page.nextCursor, loadingMore: false }),
       () => setState({ kind: 'loaded', items, nextCursor, loadingMore: false }),
     );

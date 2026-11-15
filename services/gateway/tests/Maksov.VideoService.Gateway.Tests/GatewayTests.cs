@@ -63,6 +63,8 @@ public sealed class GatewayFactory : WebApplicationFactory<Program>, IAsyncLifet
     public StubService Users { get; private set; } = null!;
     public StubService Analysis { get; private set; } = null!;
     public StubService Comments { get; private set; } = null!;
+    public StubService Friends { get; private set; } = null!;
+    public StubService Feed { get; private set; } = null!;
 
     public async ValueTask InitializeAsync()
     {
@@ -70,6 +72,8 @@ public sealed class GatewayFactory : WebApplicationFactory<Program>, IAsyncLifet
         Users = await StubService.StartAsync("users");
         Analysis = await StubService.StartAsync("analysis");
         Comments = await StubService.StartAsync("comments");
+        Friends = await StubService.StartAsync("friends");
+        Feed = await StubService.StartAsync("feed");
     }
 
     public override async ValueTask DisposeAsync()
@@ -78,6 +82,8 @@ public sealed class GatewayFactory : WebApplicationFactory<Program>, IAsyncLifet
         await Users.DisposeAsync();
         await Analysis.DisposeAsync();
         await Comments.DisposeAsync();
+        await Friends.DisposeAsync();
+        await Feed.DisposeAsync();
         await base.DisposeAsync();
     }
 
@@ -89,6 +95,8 @@ public sealed class GatewayFactory : WebApplicationFactory<Program>, IAsyncLifet
             ["ReverseProxy:Clusters:users:Destinations:d1:Address"] = Users.Address,
             ["ReverseProxy:Clusters:analysis:Destinations:d1:Address"] = Analysis.Address,
             ["ReverseProxy:Clusters:comments:Destinations:d1:Address"] = Comments.Address,
+            ["ReverseProxy:Clusters:friends:Destinations:d1:Address"] = Friends.Address,
+            ["ReverseProxy:Clusters:feed:Destinations:d1:Address"] = Feed.Address,
         }));
         builder.ConfigureServices(services => services.AddTestAuthentication());
     }
@@ -112,6 +120,8 @@ public sealed class GatewayTests : IClassFixture<GatewayFactory>
     [InlineData("GET", "/api/videos/0190f5b4-0000-7000-8000-000000000001/description")]
     [InlineData("GET", "/api/users/me")]
     [InlineData("GET", "/api/feed")]
+    [InlineData("PUT", "/api/users/u1/follow")]
+    [InlineData("GET", "/api/friends/recommendations")]
     [InlineData("GET", "/api/users/u1/videos")]
     [InlineData("GET", "/api/videos/0190f5b4-0000-7000-8000-000000000001/comments")]
     [InlineData("DELETE", "/api/videos/0190f5b4-0000-7000-8000-000000000001")]
@@ -134,9 +144,13 @@ public sealed class GatewayTests : IClassFixture<GatewayFactory>
     [InlineData("GET", "/api/users/me", "users")]
     [InlineData("PUT", "/api/users/me", "users")]
     [InlineData("GET", "/api/users/u1", "users")]
-    [InlineData("PUT", "/api/users/u1/follow", "users")]
     [InlineData("GET", "/api/users", "users")]
-    [InlineData("GET", "/api/feed", "videos")]
+    [InlineData("GET", "/api/feed", "feed")]
+    [InlineData("PUT", "/api/users/u1/follow", "friends")]
+    [InlineData("DELETE", "/api/users/u1/follow", "friends")]
+    [InlineData("GET", "/api/friends/u1/stats", "friends")]
+    [InlineData("GET", "/api/friends/recommendations", "friends")]
+    [InlineData("GET", "/api/videos/cards", "videos")]
     [InlineData("GET", "/api/users/u1/videos", "videos")]
     [InlineData("DELETE", "/api/videos/0190f5b4-0000-7000-8000-000000000001", "videos")]
     [InlineData("GET", "/api/videos/0190f5b4-0000-7000-8000-000000000001/comments", "comments")]

@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/feed/">
+    <Project Path="Maksov.VideoService.Feed.Bll/Maksov.VideoService.Feed.Bll.csproj" />
+    <Project Path="Maksov.VideoService.Feed.Dal/Maksov.VideoService.Feed.Dal.csproj" />
+    <Project Path="Maksov.VideoService.Feed.Features.Feed/Maksov.VideoService.Feed.Features.Feed.csproj" />
+    <Project Path="Maksov.VideoService.Feed.WebApi/Maksov.VideoService.Feed.WebApi.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Maksov.VideoService.Feed.Tests/Maksov.VideoService.Feed.Tests.csproj" />
+  </Folder>
+</Solution>

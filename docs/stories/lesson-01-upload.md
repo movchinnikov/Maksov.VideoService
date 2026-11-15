@@ -1,5 +1,7 @@
 # Lesson 1: upload, transcoding, playback, profiles, feed, comments
 
+> State at the git tag `lesson-01` (follows in `users`, feed in `videos`); test names refer to that tag. Later changes — [lesson 2](lesson-02-friends-feed.md).
+
 - **ADR:** [0001](../adr/0001-lesson-01-upload-transcode-watch.md), [0002](../adr/0002-cmaf-dash-and-hls.md), [0003](../adr/0003-keycloak-identity.md), [0006](../adr/0006-microservices-gateway-videos-users-analysis.md), [0007](../adr/0007-vertical-first.md), [0008](../adr/0008-separate-solutions-nuget.md), [0009](../adr/0009-social-features-comments.md)
 - **Contracts:** [contracts/openapi/api.yaml](../../contracts/openapi/api.yaml), [internal-analysis.yaml](../../contracts/openapi/internal-analysis.yaml), [internal-comments.yaml](../../contracts/openapi/internal-comments.yaml), [internal-users.yaml](../../contracts/openapi/internal-users.yaml), [video-processed.v1.json](../../contracts/events/video-processed.v1.json), [video-deleted.v1.json](../../contracts/events/video-deleted.v1.json)
 

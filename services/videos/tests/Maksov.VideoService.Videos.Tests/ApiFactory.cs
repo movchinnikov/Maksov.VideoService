@@ -20,9 +20,10 @@ namespace Maksov.VideoService.Videos.Tests;
 /// <summary>API with replaced adapters (ports → in-memory) and test authentication.</summary>
 public sealed class ApiFactory : WebApplicationFactory<VideosApiMarker>
 {
+    public const string InternalKey = "test-internal-key";
+
     public InMemoryVideoRepository Videos { get; } = new();
     public FakeObjectStorage Storage { get; } = new();
-    public FakeFollowing Following { get; } = new();
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -32,13 +33,12 @@ public sealed class ApiFactory : WebApplicationFactory<VideosApiMarker>
         builder.UseSetting("Storage:AccessKey", "test");
         builder.UseSetting("Storage:SecretKey", "test-secret");
         builder.UseSetting("Upload:MaxBytes", "1048576");
+        builder.UseSetting("Internal:ApiKey", InternalKey);
 
         builder.ConfigureServices(services =>
         {
             services.RemoveAll<IVideoRepository>();
             services.AddSingleton<IVideoRepository>(Videos);
-            services.RemoveAll<IFollowingProvider>();
-            services.AddSingleton<IFollowingProvider>(Following);
             services.RemoveAll<IObjectStorage>();
             services.AddSingleton<IObjectStorage>(Storage);
 
@@ -72,6 +72,12 @@ public sealed class InMemoryVideoRepository : IVideoRepository
 
     public Task<VideoRecord?> GetVisibleAsync(Guid id, string viewerId, CancellationToken cancellationToken) =>
         Task.FromResult(_videos.TryGetValue(id, out var v) && (v.OwnerId == viewerId || v.Status == VideoStatus.Ready) ? v : null);
+
+    public Task<IReadOnlyList<VideoRecord>> GetReadyByIdsAsync(IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken)
+    {
+        IReadOnlyList<VideoRecord> list = _videos.Values.Where(v => v.Status == VideoStatus.Ready && ids.Contains(v.Id)).ToList();
+        return Task.FromResult(list);
+    }
 
     public Task<IReadOnlyList<VideoRecord>> ListReadyByOwnersAsync(IReadOnlyCollection<string> ownerIds, PageCursor? after, int limit, CancellationToken cancellationToken)
     {
@@ -172,14 +178,4 @@ public sealed class FakeObjectStorage : IObjectStorage
 
     public void Put(string key, string content, string contentType = "application/octet-stream") =>
         Objects[key] = (Encoding.UTF8.GetBytes(content), contentType);
-}
-
-public sealed class FakeFollowing : IFollowingProvider
-{
-    private readonly ConcurrentDictionary<string, List<string>> _map = new();
-
-    public void Set(string user, params string[] followed) => _map[user] = [.. followed];
-
-    public Task<IReadOnlyList<string>> GetFollowingIdsAsync(string userId, CancellationToken cancellationToken) =>
-        Task.FromResult<IReadOnlyList<string>>(_map.TryGetValue(userId, out var l) ? l : []);
 }

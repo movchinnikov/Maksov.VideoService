@@ -1,5 +1,7 @@
 # SLO and resources: lesson 1
 
+> State at the git tag `lesson-01`. Resources and runbooks for `friends` and `feed` — [lesson-02.md](lesson-02.md).
+
 ## SLI / SLO (local stand)
 | Service | SLI | SLO |
 | --- | --- | --- |

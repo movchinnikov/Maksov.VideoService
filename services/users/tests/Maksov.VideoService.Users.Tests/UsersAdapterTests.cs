@@ -23,7 +23,7 @@ public sealed class UsersAdapterTests : IAsyncLifetime
         }
 
         await new SqlMigrator(_db, NullLogger<SqlMigrator>.Instance).MigrateAsync(UsersDal.MigrationsAssembly, Ct);
-        await using var cmd = _db.CreateCommand("truncate follows, profiles");
+        await using var cmd = _db.CreateCommand("truncate profiles");
         await cmd.ExecuteNonQueryAsync(Ct);
     }
 
@@ -85,43 +85,26 @@ public sealed class UsersAdapterTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Follow_is_idempotent_counts_and_unknown_target_is_rejected()
+    public async Task Exists_and_batch_lookup()
     {
         await Repo.GetOrCreateAsync("f-a", "fa", Ct);
         await Repo.GetOrCreateAsync("f-b", "fb", Ct);
 
-        Assert.True(await Repo.FollowAsync("f-a", "f-b", Ct));
-        Assert.True(await Repo.FollowAsync("f-a", "f-b", Ct));
-        Assert.False(await Repo.FollowAsync("f-a", "ghost", Ct));
-
-        var b = await Repo.GetViewAsync("f-b", "f-a", Ct);
-        var a = await Repo.GetViewAsync("f-a", "f-a", Ct);
-        Assert.Equal((1, 0, true), (b!.FollowersCount, b.FollowingCount, b.IsFollowing));
-        Assert.Equal((0, 1), (a!.FollowersCount, a.FollowingCount));
-        Assert.Equal(["f-b"], await Repo.GetFollowingIdsAsync("f-a", 10, Ct));
-
-        await Repo.UnfollowAsync("f-a", "f-b", Ct);
-        await Repo.UnfollowAsync("f-a", "f-b", Ct);
-        Assert.Equal(0, (await Repo.GetViewAsync("f-b", "f-a", Ct))!.FollowersCount);
+        Assert.True(await Repo.ExistsAsync("f-a", Ct));
+        Assert.False(await Repo.ExistsAsync("ghost", Ct));
+        var many = await Repo.GetManyAsync(["f-a", "f-b", "ghost"], Ct);
+        Assert.Equal(["fa", "fb"], many.Select(p => p.Username));
+        Assert.Empty(await Repo.GetManyAsync([], Ct));
     }
 
     [Fact]
-    public async Task Self_follow_is_blocked_by_the_database()
-    {
-        await Repo.GetOrCreateAsync("f-self", "me", Ct);
-
-        await Assert.ThrowsAsync<PostgresException>(() => Repo.FollowAsync("f-self", "f-self", Ct));
-    }
-
-    [Fact]
-    public async Task Search_matches_prefix_ignores_case_escapes_wildcards_and_marks_following()
+    public async Task Search_matches_prefix_ignores_case_escapes_wildcards()
     {
         await Repo.GetOrCreateAsync("s-viewer", "viewer", Ct);
         await Repo.GetOrCreateAsync("s-1", "Anna_k", Ct);
         await Repo.GetOrCreateAsync("s-2", "annabel", Ct);
         await Repo.GetOrCreateAsync("s-3", "50%club", Ct);
         await Repo.UpdateAsync("s-3", "Club Fifty", "", Ct);
-        await Repo.FollowAsync("s-viewer", "s-2", Ct);
 
         var anna = await Repo.SearchAsync("ANNA", "s-viewer", 10, Ct);
         var percent = await Repo.SearchAsync("50%", "s-viewer", 10, Ct);
@@ -130,7 +113,6 @@ public sealed class UsersAdapterTests : IAsyncLifetime
         var byDisplayName = await Repo.SearchAsync("club", "s-viewer", 10, Ct);
 
         Assert.Equal(["Anna_k", "annabel"], anna.Select(p => p.Username).Order(StringComparer.Ordinal));
-        Assert.True(anna.Single(p => p.UserId == "s-2").IsFollowing);
         Assert.Equal(["50%club"], percent.Select(p => p.Username));
         Assert.DoesNotContain(wildcard, p => p.UserId != "s-3");
         Assert.Equal(["Anna_k"], underscore.Select(p => p.Username));

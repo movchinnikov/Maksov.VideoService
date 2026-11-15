@@ -3,6 +3,13 @@
 A tutorial series: an Instagram-class video social network on **.NET 11**, fully local.
 Each lesson is a git tag `lesson-NN` with working code, tests and the lesson text in [docs/lessons](docs/lessons).
 
+| Lesson | Text | State |
+| --- | --- | --- |
+| 1 | [Upload, transcoding, profiles, comments](docs/lessons/01-upload-transcode-watch.md) | tag `lesson-01`: gateway, videos, users (with follows), analysis, comments; the feed is built inside `videos` |
+| 2 | [Friends, recommended friends on pgvector, feed service](docs/lessons/02-friends-feed-pgvector.md) | follows move into the new `friends` service (PostgreSQL + pgvector), the feed becomes the stateless `feed` service returning ids, `videos` serves cards; later in lesson 2: profile polish, likes, multipart upload with resume |
+
+This README describes the **current main state**. The parts introduced in lesson 2 — the `friends` and `feed` services, pgvector and the changed feed/follow API — are marked *(lesson 2)*; the `lesson-01` tag is the state before them.
+
 ## Quick start
 
 You need: Docker Desktop (≥ 8 GB RAM for the VM; with `make up-ml` ≥ 10 GB), `make`, Node.js 24+ (for `make test-web`), `python3` and `curl` (for `make demo`).
@@ -30,10 +37,10 @@ Open http://localhost:3000, sign in as **demo** with the `DEMO_PASSWORD` from yo
 | Gateway (single API entry point) | http://localhost:8081 | Keycloak JWT |
 | Keycloak | http://localhost:8080 | admin / from `.env` |
 | MinIO Console | http://localhost:9001 | from `.env` |
-| PostgreSQL | localhost:5433 | from `.env` (databases `videos`, `users`, `analysis`, `comments`) |
+| PostgreSQL | localhost:5433 | from `.env` (databases `videos`, `users`, `analysis`, `comments`, `friends`; pgvector build of PostgreSQL 18) |
 | Ollama (`make up-ml` only) | http://localhost:11434 | no auth, localhost only |
 
-The `videos`, `users`, `analysis`, `comments` services publish no ports — only the gateway talks to them.
+The `videos`, `users`, `analysis`, `comments`, `friends`, `feed` services publish no ports — only the gateway talks to them.
 
 ### Services
 
@@ -41,17 +48,19 @@ The `videos`, `users`, `analysis`, `comments` services publish no ports — only
 | --- | --- | --- | --- | --- |
 | `web` | `clients/web` | React, nginx | — | 0.25 / 64 MB |
 | `gateway` | `services/gateway` | YARP: JWT validation, rate limit, routing | — | 0.75 / 192 MB |
-| `videos` | `services/videos` | upload, statuses, "my videos", DASH/HLS delivery, feed, profile grid, deletion | DB `videos`: `videos`, `transcode_jobs`, `outbox` | 1.0 / 256 MB |
+| `videos` | `services/videos` | upload, statuses, "my videos", DASH/HLS delivery, video cards (`GET /api/videos/cards`), profile grid, deletion, internal "ready videos by owners" query | DB `videos`: `videos`, `transcode_jobs`, `outbox` | 1.0 / 256 MB |
 | `media-worker` | `services/videos/Maksov.VideoService.Videos.MediaWorker` | CMAF transcoding, outbox delivery to subscribers (part of the videos service) | DB `videos`, MinIO | 2.0 / 1.5 GB |
-| `users` | `services/users` | profiles, follows, people search | DB `users`: `profiles`, `follows` | 0.5 / 192 MB |
+| `users` | `services/users` | profiles, people search, batch lookup by ids, internal existence check | DB `users`: `profiles` | 0.5 / 192 MB |
 | `analysis` | `services/analysis` | event intake, description API | DB `analysis`: `analyses` | 0.5 / 256 MB |
 | `analysis-worker` | `services/analysis` | ffmpeg video analysis, optional frame captioning | DB `analysis`, MinIO | 1.0 / 768 MB |
 | `comments` | `services/comments` | video comments, event intake | DB `comments`: `comments`, `known_videos` | 0.5 / 192 MB |
-| `*-migrator` | service images | one-off DB migrations (`videos`, `users`, `analysis`, `comments`) | — | up to 0.5 / 256 MB |
-| `postgres` · `minio` · `keycloak` | `deploy/` | infrastructure | — | 1.0 / 512 MB · 1.0 / 512 MB · 1.5 / 1 GB |
+| `friends` *(lesson 2)* | `services/friends` | follows, stats/status, recommended friends (graph embeddings in pgvector) | DB `friends`: `follows`, `user_embeddings` (pgvector) | 0.5 / 192 MB |
+| `feed` *(lesson 2)* | `services/feed` | feed as a page of video ids (stateless) | — | 0.5 / 160 MB |
+| `*-migrator` | service images | one-off DB migrations (`videos`, `users`, `analysis`, `comments`, `friends`) | — | up to 0.5 / 256 MB |
+| `postgres` · `minio` · `keycloak` | `deploy/` | infrastructure (`postgres` is the pinned `pgvector/pgvector` image since lesson 2) | — | 1.0 / 512 MB · 1.0 / 512 MB · 1.5 / 1 GB |
 | `ollama` (profile `ml`) | — | local vision model | volume `ollama-data` | 4.0 / 4 GB |
 
-## Lesson 1: what works
+## What works
 
 ```mermaid
 flowchart LR
@@ -60,9 +69,14 @@ flowchart LR
   B -- /api --> G[gateway]
   G --> V[videos]
   G --> U[users]
+  G --> F[feed]
+  G --> FR[friends]
   G -- GET description --> A[analysis]
   G -- comments --> C[comments]
-  V -- following-ids --> U
+  F -- following-ids --> FR
+  F -- ready-by-owners --> V
+  FR -- profile exists --> U
+  FR --> PF[(friends DB, pgvector)]
   V -- job + NOTIFY --> PV[(videos DB)]
   W[media-worker + ffmpeg] -- SKIP LOCKED --> PV
   W -- CMAF: DASH + HLS --> M
@@ -89,16 +103,17 @@ flowchart LR
 | What | How |
 | --- | --- |
 | Web bottom navigation | "Feed · Search · ＋ · Profile" |
-| People search | `GET /api/users?query=` — by login or name prefix, case-insensitive |
-| Follows | `PUT` / `DELETE /api/users/{id}/follow` (idempotent, cannot follow yourself) |
-| Profile | `GET /api/users/{id}`: login, name, "about", counters, `isFollowing`; video grid — `GET /api/users/{id}/videos` |
-| Feed | `GET /api/feed`: ready videos from followed users and your own, newest first; follows from users are cached for 20 s, when users is unavailable — only your own videos |
+| People search | `GET /api/users?query=` — by login or name prefix, case-insensitive; `GET /api/users?ids=a,b` — batch lookup |
+| Follows *(lesson 2: moved from `users` to `friends`)* | `PUT` / `DELETE /api/users/{id}/follow` — served by `friends` (idempotent, cannot follow yourself, the profile must exist) |
+| Profile *(counters and relation flags: lesson 2)* | `GET /api/users/{id}`: login, name, "about"; counters and the relation to you (`isFollowing`, `followsYou`, `isMutual`) — `GET /api/friends/{id}/stats`; follower and following lists with paging and the same flags — `GET /api/friends/{id}/followers` and `/following`; relation of many users — `GET /api/friends/status?ids=` (`following`, `followedBy`); video grid — `GET /api/users/{id}/videos`. The web app shows "Mutual" / "Follows you" badges and has the pages `/u/:id/followers` and `/u/:id/following` |
+| Recommended friends *(lesson 2)* | `GET /api/friends/recommendations`: friends of friends, ranked by cosine similarity of graph embeddings (pgvector, baseline `graph-hash-v1`), then by mutual friends |
+| Feed *(lesson 2: the `feed` service; in lesson 1 `GET /api/feed` lived in `videos` and returned cards)* | two calls: `GET /api/feed` returns a page of video ids (followed users + your own, newest first), then `GET /api/videos/cards?ids=` returns the cards in that order; follows are cached in `feed` for 20 s, when `friends` is unavailable the feed shows only your own videos |
 | Comments | `GET`/`POST /api/videos/{id}/comments`, `DELETE …/{commentId}`: the comment author or the video owner can delete; only ready videos can be commented on (the comments service learns about them from an event, up to 30 s) |
 | Deletion | `DELETE /api/videos/{id}` (owner only, 204): cleans up MinIO, description and comments (`video.deleted.v1` event) |
 | Visibility | ready videos are visible to any authenticated user; non-ready and deleted ones are not (404) |
 | "Interesting videos" | deferred until embeddings and recommendations (lessons 8–9) |
 
-Decisions — [ADR 0009](docs/adr/0009-social-features-comments.md).
+Decisions — [ADR 0009](docs/adr/0009-social-features-comments.md) (visibility, comments, deletion) and [ADR 0010](docs/adr/0010-friends-and-feed-services.md) (lesson 2) (friends and feed services).
 
 ### How to view a video description
 
@@ -113,9 +128,9 @@ curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8081/api/videos/<id>/
 
 The description is a set of "tool readings": scene changes, brightness, saturation, hue, motion, sound and pauses. What is actually depicted becomes known only with the vision model enabled: `make up-ml` starts a local Ollama (default model `moondream`, the first start downloads the model) and captions a few frames. The model is off by default. The same data is shown in the UI, on the video page.
 
-Decisions: [ADR 0001](docs/adr/0001-lesson-01-upload-transcode-watch.md), [0002](docs/adr/0002-cmaf-dash-and-hls.md), [0003](docs/adr/0003-keycloak-identity.md), [0004 — solution structure (partially superseded by 0008)](docs/adr/0004-solution-structure.md), [0005 — phone sign-in](docs/adr/0005-phone-login-keycloak.md), [0006 — services and gateway](docs/adr/0006-microservices-gateway-videos-users-analysis.md), [0007 — vertical video](docs/adr/0007-vertical-first.md), [0008 — separate solutions and NuGet](docs/adr/0008-separate-solutions-nuget.md), [0009 — social features and comments](docs/adr/0009-social-features-comments.md).
+Decisions: [ADR 0001](docs/adr/0001-lesson-01-upload-transcode-watch.md), [0002](docs/adr/0002-cmaf-dash-and-hls.md), [0003](docs/adr/0003-keycloak-identity.md), [0004 — solution structure (partially superseded by 0008)](docs/adr/0004-solution-structure.md), [0005 — phone sign-in](docs/adr/0005-phone-login-keycloak.md), [0006 — services and gateway](docs/adr/0006-microservices-gateway-videos-users-analysis.md), [0007 — vertical video](docs/adr/0007-vertical-first.md), [0008 — separate solutions and NuGet](docs/adr/0008-separate-solutions-nuget.md), [0009 — social features and comments](docs/adr/0009-social-features-comments.md), [0010 — friends and feed services, lesson 2](docs/adr/0010-friends-and-feed-services.md).
 
-Contracts: [public API](contracts/openapi/api.yaml); internal APIs — [analysis](contracts/openapi/internal-analysis.yaml), [comments](contracts/openapi/internal-comments.yaml), [users](contracts/openapi/internal-users.yaml); events — [video.processed.v1](contracts/events/video-processed.v1.json), [video.deleted.v1](contracts/events/video-deleted.v1.json).
+Contracts: [public API](contracts/openapi/api.yaml); internal APIs — [analysis](contracts/openapi/internal-analysis.yaml), [comments](contracts/openapi/internal-comments.yaml), [users](contracts/openapi/internal-users.yaml), [friends](contracts/openapi/internal-friends.yaml), [videos](contracts/openapi/internal-videos.yaml); events — [video.processed.v1](contracts/events/video-processed.v1.json), [video.deleted.v1](contracts/events/video-deleted.v1.json).
 
 ## Commands
 
@@ -142,15 +157,17 @@ libs/                     shared libraries solution (NuGet): Primitives, Buildin
 artifacts/nuget/          local package feed (make pack; not in git)
 services/
   gateway/                YARP gateway: JWT, rate limit, routes (appsettings.json) — its own solution
-  videos/                 video service: WebApi · Bll · Dal · Domain · Features.Videos · Features.Feed · MediaWorker (+ tests/)
-  users/                  profiles and follows service: WebApi · Bll · Dal · Features.Profiles (+ tests/)
+  videos/                 video service: WebApi · Bll · Dal · Domain · Features.Videos · Features.Catalog (cards, profile grid, internal query) · MediaWorker (+ tests/)
+  users/                  profiles service: WebApi · Bll · Dal · Features.Profiles (+ tests/)
+  friends/                social graph and recommendations: WebApi · Bll (incl. GraphEmbedding) · Dal (pgvector) · Features.Friends (+ tests/)
+  feed/                   feed (video ids, stateless): WebApi · Bll · Dal (HTTP clients) · Features.Feed (+ tests/)
   analysis/               descriptions service: WebApi · Bll · Dal · Features.Descriptions · Worker with ffmpeg (+ tests/)
   comments/               comments service: WebApi · Bll · Dal · Features.Comments (+ tests/)
                           in each service folder: Maksov.VideoService.<Service>.slnx, Directory.*, global.json, nuget.config, Dockerfile
 clients/web               React + TypeScript + Vite, Shaka Player
 contracts/{openapi,events}  contracts: public and internal APIs, event schemas
 deploy/compose            lesson docker-compose
-deploy/postgres           init script: a database and role per service
+deploy/postgres           init script: a database and role per service (+ `create extension vector` in `friends`)
 deploy/keycloak           realm, phone sign-in/sign-up provider (Java), theme, SSO script
 docs/                     adr, stories, design, security, slo, lessons
 scripts/                  demo.sh (end-to-end scenario), verify-auth.py (sign-in and sign-up)
@@ -171,22 +188,24 @@ Each service is a separate solution, shared code arrives as packages from the lo
 | What you need | Where to look |
 | --- | --- |
 | Why a video has the "defective" status | `docker exec videoservice-postgres-1 psql -U videos -d videos -c "select v.title, v.status, v.failure_reason, j.attempts, j.last_error from videos v left join transcode_jobs j on j.video_id = v.id order by v.created_at desc limit 5;"` — `last_error` holds the full ffmpeg output |
-| Service logs | `make logs s=media-worker` (or `gateway`, `videos`, `users`, `analysis`, `analysis-worker`, `comments`, `keycloak`) |
-| 401 on `/api/*` with a valid token | the service behind the gateway validates the JWT itself: `make logs s=gateway` and `s=videos`/`users`/`analysis`/`comments`; check issuer/audience (`videoservice-api`) |
+| Service logs | `make logs s=media-worker` (or `gateway`, `videos`, `users`, `analysis`, `analysis-worker`, `comments`, `friends`, `feed`, `keycloak`) |
+| 401 on `/api/*` with a valid token | the service behind the gateway validates the JWT itself: `make logs s=gateway` and `s=videos`/`users`/`analysis`/`comments`/`friends`/`feed`; check issuer/audience (`videoservice-api`) |
 | `/internal/**` returns 404 | by design: internal endpoints are not published through the gateway |
 | Files in storage | MinIO Console http://localhost:9001 → bucket `media`: `uploads/<id>/source` — the source, `videos/<id>/stream/` — segments and manifests |
 | MinIO login/password | `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` from `.env` |
 | Keycloak admin | http://localhost:8080 → `KC_BOOTSTRAP_ADMIN_USERNAME` / `KC_BOOTSTRAP_ADMIN_PASSWORD` from `.env` |
 | The description did not appear (video `ready`) | 1) was the event sent? in DB `videos`: `select id, attempts, sent_at, last_error from outbox order by created_at desc limit 5;` (one row per subscriber — column `subscriber`; 401 — `INTERNAL_API_KEY` mismatch, connection refused — `analysis` is not up; without `Outbox__Subscribers__<name>__BaseUrl` addresses the dispatcher does not start). 2) accepted and processed? in DB `analysis`: `select video_id, status, attempts, last_error from analyses order by created_at desc limit 5;`. 3) `make logs s=analysis-worker`. Details — [runbook](docs/slo/lesson-01.md) |
 | Cannot comment: "video not found" | the comments service registers a video from the `video.processed.v1` event (up to 30 s after `ready`): in DB `videos` — `select subscriber, sent_at, last_error from outbox order by created_at desc limit 5;`, in DB `comments` — `select * from known_videos;`. Details — [runbook](docs/slo/lesson-01.md) |
-| The feed is empty | follows (DB `users`, table `follows`), video status (the feed shows only `ready`), follows are cached for 20 s; when `users` is unavailable only your own videos are visible — [runbook](docs/slo/lesson-01.md) |
+| The feed is empty | follows (DB `friends`: `select * from follows where follower_id = '<sub>';`), video status (only `ready` appear), follows are cached in `feed` for 20 s; when `friends` is unavailable only your own videos are returned — [runbook](docs/slo/lesson-02.md) |
+| Following fails with 503 | `friends` cannot confirm the profile with `users` (`make logs s=friends`, check `users` and `INTERNAL_API_KEY`) |
+| Recommended friends are empty | the viewer follows nobody, or friends of friends are all already followed; check `user_embeddings` in DB `friends` (rows carry `model_version = graph-hash-v1`) |
 | `NU1101` / package `Maksov.VideoService.*` not found when building a service | `make pack` (the `artifacts/nuget` feed is empty or stale) |
 | `docker compose`: "required variable … is missing" after an update | `make env-sync` (called by `make up`) |
 | Retry processing of a failed video | `update videos set status='uploaded', failure_reason=null where id='…'; update transcode_jobs set status='queued', attempts=0, run_after=now(), locked_until=null, locked_by=null where video_id='…'; select pg_notify('transcode_jobs','retry');` |
 
 ## Resources
 
-Limits are set for every container; the total without Ollama is ≈ 10 CPU / 5.4 GB RAM (with `make up-ml` — another 4 CPU / 4 GB) (details — [docs/slo/lesson-01.md](docs/slo/lesson-01.md)).
+Limits are set for every container; the total without Ollama is ≈ 11 CPU / 5.8 GB RAM (≈ 10 CPU / 5.4 GB at the `lesson-01` tag; with `make up-ml` — another 4 CPU / 4 GB). Details — [docs/slo/lesson-01.md](docs/slo/lesson-01.md) and [docs/slo/lesson-02.md](docs/slo/lesson-02.md).
 
 ## Web development without Docker
 

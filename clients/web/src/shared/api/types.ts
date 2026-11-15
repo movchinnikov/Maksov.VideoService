@@ -77,8 +77,6 @@ export interface Profile {
   displayName: string;
   bio: string;
   createdAt: string;
-  followersCount?: number;
-  followingCount?: number;
 }
 
 export interface UpdateProfileRequest {
@@ -124,7 +122,6 @@ export interface UserSummary {
   username: string;
   displayName: string;
   bio: string;
-  isFollowing: boolean;
 }
 
 export interface UserCard {
@@ -132,7 +129,37 @@ export interface UserCard {
   username: string;
   displayName: string;
   bio: string;
+}
+
+export interface FeedIdsPage {
+  ids: string[];
+  nextCursor: string | null;
+}
+
+export interface UserStats {
   followersCount: number;
   followingCount: number;
   isFollowing: boolean;
+  followsYou: boolean;
+  isMutual: boolean;
+}
+
+export interface FollowListItem {
+  userId: string;
+  followedAt: string;
+  isFollowing: boolean;
+  followsYou: boolean;
+  isMutual: boolean;
+}
+
+export interface FollowPage {
+  items: FollowListItem[];
+  nextCursor: string | null;
+  total: number;
+}
+
+export interface Recommendation {
+  userId: string;
+  mutualFriends: number;
+  similarity: number;
 }

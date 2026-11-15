@@ -4,6 +4,7 @@
 - **Date:** 2026-11-15
 - **Lesson / feature:** lesson-01 (backend restructuring)
 - **Extends:** [ADR 0004](0004-solution-structure.md) (solution structure), [ADR 0003](0003-keycloak-identity.md) (identity)
+- **Service list update:** later ADRs added the services `comments` ([ADR 0009](0009-social-features-comments.md)), `friends` and `feed` (lesson 2, [ADR 0010](0010-friends-and-feed-services.md)); the gateway, DB-per-service and outbox decisions below apply to all of them.
 - **Extended by:** [ADR 0008](0008-separate-solutions-nuget.md) (separate solutions and NuGet layout: project paths below are updated), [ADR 0009](0009-social-features-comments.md) (`comments` service, outbox subscribers, social features)
 
 ## Context

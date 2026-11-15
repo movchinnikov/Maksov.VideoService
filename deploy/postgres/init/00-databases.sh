@@ -15,3 +15,6 @@ create_service_db videos   "${VIDEOS_DB_PASSWORD:?}"
 create_service_db users    "${USERS_DB_PASSWORD:?}"
 create_service_db analysis "${ANALYSIS_DB_PASSWORD:?}"
 create_service_db comments "${COMMENTS_DB_PASSWORD:?}"
+create_service_db friends "${FRIENDS_DB_PASSWORD:?}"
+# pgvector for the friends service (needs a superuser; the service role cannot create extensions).
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname friends -c 'create extension if not exists vector;'

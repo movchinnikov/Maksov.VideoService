@@ -1,4 +1,4 @@
-# Lesson 1: web → gateway → services videos / users / analysis / comments (+ workers), Keycloak, MinIO, Postgres.
+# Lesson 2: web → gateway → services videos / users / analysis / comments / friends / feed (+ workers), Keycloak, MinIO, Postgres.
 # Run: make up (from the repository root). All resource limits and healthchecks are explicit.
 name: videoservice
 
@@ -17,7 +17,8 @@ x-auth-env: &auth-env
 
 services:
   postgres:
-    image: postgres:18.7-alpine
+    # pgvector build of PostgreSQL 18 (the friends service stores user embeddings in a vector column).
+    image: pgvector/pgvector:0.8.1-pg18
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
@@ -26,6 +27,7 @@ services:
       USERS_DB_PASSWORD: ${USERS_DB_PASSWORD}
       ANALYSIS_DB_PASSWORD: ${ANALYSIS_DB_PASSWORD}
       COMMENTS_DB_PASSWORD: ${COMMENTS_DB_PASSWORD}
+      FRIENDS_DB_PASSWORD: ${FRIENDS_DB_PASSWORD}
     command: ["postgres", "-c", "shared_buffers=128MB", "-c", "max_connections=100"]
     ports: ["127.0.0.1:5433:5432"]
     volumes:
@@ -117,9 +119,8 @@ services:
       <<: [*storage-env, *auth-env]
       ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=videos;Username=videos;Password=${VIDEOS_DB_PASSWORD}
       Upload__MaxBytes: ${UPLOAD_MAX_BYTES}
-      # The feed is built from subscriptions in the users service (internal call with a key).
-      Users__BaseUrl: http://users:8080
-      Users__InternalApiKey: ${INTERNAL_API_KEY}
+      # Internal query "ready videos by owners" for the feed service.
+      Internal__ApiKey: ${INTERNAL_API_KEY}
     depends_on:
       videos-migrator: { condition: service_completed_successfully }
       keycloak: { condition: service_healthy }
@@ -216,6 +217,60 @@ services:
       resources:
         limits: { cpus: "0.5", memory: 192M }
 
+  # ---------------- friends: social graph + recommended friends (pgvector) ----------------
+  friends-migrator:
+    build: { context: ../.., dockerfile: services/friends/Dockerfile }
+    image: videoservice/friends:local
+    command: ["--migrate"]
+    environment:
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=friends;Username=friends;Password=${FRIENDS_DB_PASSWORD}
+    depends_on:
+      postgres: { condition: service_healthy }
+    healthcheck:
+      disable: true
+    restart: "no"
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 192M }
+
+  friends:
+    image: videoservice/friends:local
+    environment:
+      <<: *auth-env
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=friends;Username=friends;Password=${FRIENDS_DB_PASSWORD}
+      Internal__ApiKey: ${INTERNAL_API_KEY}
+      # A follow checks that the profile exists in the users service (internal call).
+      Users__BaseUrl: http://users:8080
+      Users__InternalApiKey: ${INTERNAL_API_KEY}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+    depends_on:
+      friends-migrator: { condition: service_completed_successfully }
+      keycloak: { condition: service_healthy }
+    read_only: true
+    tmpfs: [/tmp:size=16m]
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 192M }
+
+  # ---------------- feed: assembles the feed as a list of video ids (stateless) ----------------
+  feed:
+    build: { context: ../.., dockerfile: services/feed/Dockerfile }
+    image: videoservice/feed:local
+    environment:
+      <<: *auth-env
+      Friends__BaseUrl: http://friends:8080
+      Friends__InternalApiKey: ${INTERNAL_API_KEY}
+      Videos__BaseUrl: http://videos:8080
+      Videos__InternalApiKey: ${INTERNAL_API_KEY}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+    depends_on:
+      keycloak: { condition: service_healthy }
+    read_only: true
+    tmpfs: [/tmp:size=16m]
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 160M }
+
   # ---------------- analysis: description of what is in the video ----------------
   analysis-migrator:
     build: { context: ../.., dockerfile: services/analysis/Dockerfile }
@@ -295,6 +350,8 @@ services:
       users: { condition: service_healthy }
       analysis: { condition: service_healthy }
       comments: { condition: service_healthy }
+      friends: { condition: service_healthy }
+      feed: { condition: service_healthy }
       keycloak: { condition: service_healthy }
     read_only: true
     tmpfs: [/tmp:size=16m]

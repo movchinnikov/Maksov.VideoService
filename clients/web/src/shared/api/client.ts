@@ -5,7 +5,12 @@ import type {
   Comment,
   CommentPage,
   Description,
+  FeedIdsPage,
+  FeedItem,
   FeedPage,
+  FollowPage,
+  Recommendation,
+  UserStats,
   UserCard,
   UserSummary,
   ProblemDetails,
@@ -100,7 +105,25 @@ export const api = {
   updateMe: (body: UpdateProfileRequest) =>
     request<Profile>('/api/users/me', { method: 'PUT', body: JSON.stringify(body) }),
   getFeed: (cursor?: string, signal?: AbortSignal) =>
-    request<FeedPage>(`/api/feed${qs({ cursor, limit: 10 })}`, {}, signal),
+    request<FeedIdsPage>(`/api/feed${qs({ cursor, limit: 10 })}`, {}, signal),
+  getCards: (ids: string[], signal?: AbortSignal) =>
+    ids.length === 0
+      ? Promise.resolve({ items: [] as FeedItem[] })
+      : request<{ items: FeedItem[] }>(`/api/videos/cards${qs({ ids: ids.join(',') })}`, {}, signal),
+  getStats: (id: string, signal?: AbortSignal) =>
+    request<UserStats>(`/api/friends/${encodeURIComponent(id)}/stats`, {}, signal),
+  getFollowingStatus: (ids: string[], signal?: AbortSignal) =>
+    ids.length === 0
+      ? Promise.resolve({ following: [] as string[], followedBy: [] as string[] })
+      : request<{ following: string[]; followedBy?: string[] }>(`/api/friends/status${qs({ ids: ids.join(',') })}`, {}, signal),
+  getFollowList: (id: string, kind: 'followers' | 'following', cursor?: string, signal?: AbortSignal) =>
+    request<FollowPage>(`/api/friends/${encodeURIComponent(id)}/${kind}${qs({ cursor, limit: 20 })}`, {}, signal),
+  getRecommendations: (signal?: AbortSignal) =>
+    request<{ items: Recommendation[] }>(`/api/friends/recommendations${qs({ limit: 10 })}`, {}, signal),
+  getUsersByIds: (ids: string[], signal?: AbortSignal) =>
+    ids.length === 0
+      ? Promise.resolve({ items: [] as UserSummary[] })
+      : request<{ items: UserSummary[] }>(`/api/users${qs({ ids: ids.join(',') })}`, {}, signal),
   getUserVideos: (id: string, cursor?: string, signal?: AbortSignal) =>
     request<FeedPage>(`/api/users/${encodeURIComponent(id)}/videos${qs({ cursor, limit: 30 })}`, {}, signal),
   deleteVideo: (id: string) => requestVoid(`/api/videos/${encodeURIComponent(id)}`, { method: 'DELETE' }),

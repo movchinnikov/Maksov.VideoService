@@ -2,15 +2,16 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, Navigate, useParams } from 'react-router';
 import { useAuth } from '../../app/auth';
 import { api, ApiError } from '../../shared/api/client';
-import type { FeedItem, Profile, UserCard, Video } from '../../shared/api/types';
+import type { FeedItem, Profile, UserCard, UserStats, Video } from '../../shared/api/types';
 import { getMeCached, useMe } from '../../shared/lib/data';
 import { isInProgress } from '../../shared/lib/format';
 import { mergeFirstPage, mergePages } from '../../shared/lib/pages';
 import { thumbLabel } from '../../shared/lib/social';
-import { profilePath, videoPath } from '../../shared/lib/urls';
+import { followersPath, followingPath, profilePath, videoPath } from '../../shared/lib/urls';
 import { usePolling } from '../../shared/lib/usePolling';
 import { Avatar } from '../../shared/ui/Avatar';
 import { FollowButton } from '../../shared/ui/FollowButton';
+import { RelationBadge } from '../../shared/ui/RelationBadge';
 import { Poster } from '../../shared/ui/Poster';
 
 /** /profile → own profile. */
@@ -29,7 +30,7 @@ interface Tile {
 const fromVideo = (v: Video): Tile => ({ id: v.id, title: v.title, poster: v.playback?.poster ?? null, status: v.status });
 const fromFeed = (v: FeedItem): Tile => ({ id: v.id, title: v.title, poster: v.playback.poster, status: 'ready' });
 
-type Head = { kind: 'loading' } | { kind: 'error'; message: string } | { kind: 'ok'; user: UserCard | Profile };
+type Head = { kind: 'loading' } | { kind: 'error'; message: string } | { kind: 'ok'; user: UserCard | Profile; stats: UserStats };
 
 export function ProfilePage() {
   const { id = '' } = useParams();
@@ -37,10 +38,13 @@ export function ProfilePage() {
 
   useEffect(() => {
     const controller = new AbortController();
-    getMeCached()
-      .then((m): Promise<UserCard | Profile> => (m.id === id ? Promise.resolve(m) : api.getUser(id, controller.signal)))
-      .then((user) => {
-        if (!controller.signal.aborted) setHead({ kind: 'ok', user });
+    const stats = api.getStats(id, controller.signal);
+    const user: Promise<UserCard | Profile> = getMeCached().then(
+      (m): Promise<UserCard | Profile> => (m.id === id ? Promise.resolve(m) : api.getUser(id, controller.signal)),
+    );
+    Promise.all([user, stats])
+      .then(([u, st]) => {
+        if (!controller.signal.aborted) setHead({ kind: 'ok', user: u, stats: st });
       })
       .catch((e: unknown) => {
         if (!controller.signal.aborted) {
@@ -62,14 +66,15 @@ export function ProfilePage() {
       </section>
     );
   }
-  return <ProfileBody key={id} id={id} user={head.user} />;
+  return <ProfileBody key={id} id={id} user={head.user} stats={head.stats} />;
 }
 
-function ProfileBody({ id, user }: { id: string; user: UserCard | Profile }) {
+function ProfileBody({ id, user, stats }: { id: string; user: UserCard | Profile; stats: UserStats }) {
   const auth = useAuth();
   const me = useMe();
   const own = me?.id === id;
-  const [followers, setFollowers] = useState(user.followersCount ?? 0);
+  const [followers, setFollowers] = useState(stats.followersCount);
+  const [iFollow, setIFollow] = useState(stats.isFollowing);
   const [tiles, setTiles] = useState<Tile[] | null>(null);
   const [next, setNext] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -119,14 +124,17 @@ function ProfileBody({ id, user }: { id: string; user: UserCard | Profile }) {
   };
 
   const posts = tiles ? `${tiles.length}${next ? '+' : ''}` : '–';
-  const following = 'isFollowing' in user ? user.isFollowing : false;
+  const following = stats.isFollowing;
 
   return (
     <>
       <section className="profile-head">
         <Avatar username={user.username} size="lg" />
         <div className="profile-head__main">
-          <h1>{user.username}</h1>
+          <h1>
+            {user.username}
+            {!own && <RelationBadge followsYou={stats.followsYou} isFollowing={iFollow} />}
+          </h1>
           {user.displayName && <p className="profile-head__name">{user.displayName}</p>}
           {user.bio && <p className="profile-head__bio">{user.bio}</p>}
         </div>
@@ -138,12 +146,16 @@ function ProfileBody({ id, user }: { id: string; user: UserCard | Profile }) {
           <dt>posts</dt>
         </div>
         <div>
-          <dd>{followers}</dd>
-          <dt>followers</dt>
+          <Link to={followersPath(id)}>
+            <dd>{followers}</dd>
+            <dt>followers</dt>
+          </Link>
         </div>
         <div>
-          <dd>{user.followingCount ?? 0}</dd>
-          <dt>following</dt>
+          <Link to={followingPath(id)}>
+            <dd>{stats.followingCount}</dd>
+            <dt>following</dt>
+          </Link>
         </div>
       </dl>
 
@@ -160,7 +172,11 @@ function ProfileBody({ id, user }: { id: string; user: UserCard | Profile }) {
             )}
           </>
         ) : (
-          <FollowButton userId={id} initial={following} onChange={(f) => setFollowers((n) => Math.max(0, n + (f ? 1 : -1)))} />
+          <FollowButton userId={id} initial={following} onChange={(f) => {
+              setIFollow(f);
+              setFollowers((n) => Math.max(0, n + (f ? 1 : -1)));
+            }}
+          />
         )}
       </div>
 

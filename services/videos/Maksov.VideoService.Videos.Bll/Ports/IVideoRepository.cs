@@ -21,6 +21,9 @@ public interface IVideoRepository
     /// <summary>Ready videos of the listed authors (feed, profile). Keyset pagination descending.</summary>
     Task<IReadOnlyList<VideoRecord>> ListReadyByOwnersAsync(IReadOnlyCollection<string> ownerIds, PageCursor? after, int limit, CancellationToken cancellationToken);
 
+    /// <summary>Ready videos by identifiers (cards for the feed); unknown or not ready ids are skipped, order is unspecified.</summary>
+    Task<IReadOnlyList<VideoRecord>> GetReadyByIdsAsync(IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken);
+
     /// <summary>
     /// In one transaction: awaiting_upload → uploaded, enqueue the transcode job, NOTIFY the worker.
     /// A repeated call is a no-op (returns false).
@@ -34,12 +37,6 @@ public interface IVideoRepository
     /// (in one transaction). <c>false</c> means the video does not exist or belongs to someone else.
     /// </summary>
     Task<bool> DeleteOwnedAsync(Guid id, string ownerId, CancellationToken cancellationToken);
-}
-
-/// <summary>Whom the user follows: IDs of the authors they are subscribed to (from the users service).</summary>
-public interface IFollowingProvider
-{
-    Task<IReadOnlyList<string>> GetFollowingIdsAsync(string userId, CancellationToken cancellationToken);
 }
 
 public sealed record NewVideo(

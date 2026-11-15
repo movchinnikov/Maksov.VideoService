@@ -2,7 +2,7 @@
 # End-to-end scenario on a running stack (make up):
 # Keycloak token → create upload → PUT to MinIO → complete → wait for Ready →
 # check DASH/HLS and segments → video description (separate background job) → profile → "my videos" →
-# complete idempotency → second user: follow, feed, comments, unfollow → delete a video and the
+# complete idempotency → second user: follow, feed (ids → cards), comments, recommended friends, unfollow → delete a video and the
 # event cascade (description, comments) → anonymous isolation and closed internal endpoints.
 # The test clip is vertical 9:16 with no SAR (like a phone), three shots and audio with a pause.
 set -euo pipefail
@@ -122,18 +122,26 @@ FRIEND_USER=${FRIEND_USER:-demo-friend}
 ADMIN_TOKEN=$(curl -fsS "$KC/realms/master/protocol/openid-connect/token" \
   -d grant_type=password -d client_id=admin-cli \
   -d username="$KC_BOOTSTRAP_ADMIN_USERNAME" -d password="$KC_BOOTSTRAP_ADMIN_PASSWORD" | json "d['access_token']")
-curl -s -o /dev/null -w '' -X POST -H "Authorization: Bearer $ADMIN_TOKEN" -H 'Content-Type: application/json' \
-  "$KC/admin/realms/videoservice/users" \
-  -d "{\"username\":\"$FRIEND_USER\",\"email\":\"$FRIEND_USER@example.local\",\"enabled\":true,\"emailVerified\":true,\"attributes\":{\"phoneNumber\":[\"+79990000002\"]},\"credentials\":[{\"type\":\"password\",\"value\":\"$DEMO_PASSWORD\",\"temporary\":false}]}" || true
-TOKEN2=$(curl -fsS "$KC/realms/videoservice/protocol/openid-connect/token" \
-  -d grant_type=password -d client_id=videoservice-cli \
-  -d username="$FRIEND_USER" -d password="$DEMO_PASSWORD" | json "d['access_token']")
+ensure_user() {  # ensure_user <username> <phone>: creates the user if missing (409 is fine)
+  curl -s -o /dev/null -w '' -X POST -H "Authorization: Bearer $ADMIN_TOKEN" -H 'Content-Type: application/json' \
+    "$KC/admin/realms/videoservice/users" \
+    -d "{\"username\":\"$1\",\"email\":\"$1@example.local\",\"enabled\":true,\"emailVerified\":true,\"attributes\":{\"phoneNumber\":[\"$2\"]},\"credentials\":[{\"type\":\"password\",\"value\":\"$DEMO_PASSWORD\",\"temporary\":false}]}" || true
+}
+token_of() {  # token_of <username>
+  curl -fsS "$KC/realms/videoservice/protocol/openid-connect/token" \
+    -d grant_type=password -d client_id=videoservice-cli \
+    -d username="$1" -d password="$DEMO_PASSWORD" | json "d['access_token']"
+}
+ensure_user "$FRIEND_USER" "+79990000002"
+BUDDY_USER=${BUDDY_USER:-demo-buddy}
+ensure_user "$BUDDY_USER" "+79990000003"
+TOKEN2=$(token_of "$FRIEND_USER")
 AUTH2=(-H "Authorization: Bearer $TOKEN2")
 ME_ID=$(echo "$ME" | json "d['id']")
 FRIEND_ID=$(curl -fsS "${AUTH2[@]}" "$API/api/users/me" | json "d['id']")
 ok "token received, id $FRIEND_ID"
 
-feed_has() { curl -fsS "${AUTH2[@]}" "$API/api/feed?limit=30" | json "'$1' in [i['id'] for i in d['items']]"; }
+feed_has() { curl -fsS "${AUTH2[@]}" "$API/api/feed?limit=30" | json "'$1' in d['ids']"; }
 
 step "Feed: without a follow another user's clip is absent; the author's profile shows their grid"
 [[ "$(feed_has "$VIDEO_ID")" == "False" ]] && ok "feed is empty before following"
@@ -141,11 +149,13 @@ curl -fsS "${AUTH2[@]}" "$API/api/users/$ME_ID/videos" | json "'$VIDEO_ID' in [i
 
 step "Follow → clip appears in the friend's feed, stream and description are visible"
 [[ $(curl -s -o /dev/null -w '%{http_code}' -X PUT "${AUTH2[@]}" "$API/api/users/$ME_ID/follow") == 204 ]] && ok "followed (204)"
-curl -fsS "${AUTH2[@]}" "$API/api/users/$ME_ID" | json "d['isFollowing'] and d['followersCount'] >= 1" | grep -q True && ok "profile: isFollowing, followers >= 1"
+curl -fsS "${AUTH2[@]}" "$API/api/friends/$ME_ID/stats" | json "d['isFollowing'] and d['followersCount'] >= 1" | grep -q True && ok "stats (friends service): isFollowing, followers >= 1"
+curl -fsS "${AUTH2[@]}" "$API/api/friends/status?ids=$ME_ID,nobody" | json "d['following'] == ['$ME_ID']" | grep -q True && ok "status lists exactly the followed id"
 # The follow cache in videos lives for 20 s — wait for the clip to show up in the feed.
 for i in $(seq 1 30); do [[ "$(feed_has "$VIDEO_ID")" == "True" ]] && break; sleep 1; done
 [[ "$(feed_has "$VIDEO_ID")" == "True" ]] || fail "the clip did not appear in the follower's feed"
-ok "clip is in the follower's feed"
+ok "clip is in the follower's feed (feed service returns ids only)"
+curl -fsS "${AUTH2[@]}" "$API/api/videos/cards?ids=$VIDEO_ID,00000000-0000-0000-0000-000000000000" | json "[i['id'] for i in d['items']] == ['$VIDEO_ID']" | grep -q True && ok "cards (videos service) resolve the id; unknown ids are skipped"
 [[ $(curl -s -o /dev/null -w '%{http_code}' "${AUTH2[@]}" "$API/api/videos/$VIDEO_ID/stream/manifest.mpd") == 200 ]] && ok "follower can watch the stream"
 [[ $(curl -s -o /dev/null -w '%{http_code}' "${AUTH2[@]}" "$API/api/videos/$VIDEO_ID/description") == 200 ]] && ok "follower sees the finished description"
 
@@ -164,6 +174,26 @@ curl -fsS "${AUTH[@]}" "$API/api/videos/$VIDEO_ID/comments" | json "d['total'] =
 [[ $(curl -s -o /dev/null -w '%{http_code}' -X POST "${AUTH[@]}" -H 'Content-Type: application/json' "$API/api/videos/$VIDEO_ID/comments" -d '{"text":""}') == 400 ]] && ok "empty comment — 400"
 [[ $(curl -s -o /dev/null -w '%{http_code}' -X DELETE "${AUTH[@]}" "$API/api/videos/$VIDEO_ID/comments/$C1") == 204 ]] && ok "the video owner deleted someone else's comment (204)"
 curl -fsS "${AUTH2[@]}" "$API/api/videos/$VIDEO_ID/comments" | json "d['total'] == 0" | grep -q True && ok "list is empty"
+
+step "Recommended friends: friends of friends (pgvector similarity)"
+TOKEN3=$(token_of "$BUDDY_USER")
+AUTH3=(-H "Authorization: Bearer $TOKEN3")
+BUDDY_ID=$(curl -fsS "${AUTH3[@]}" "$API/api/users/me" | json "d['id']")
+[[ $(curl -s -o /dev/null -w '%{http_code}' -X PUT "${AUTH2[@]}" "$API/api/users/$BUDDY_ID/follow") == 204 ]] && ok "$FRIEND_USER follows $BUDDY_USER"
+[[ $(curl -s -o /dev/null -w '%{http_code}' -X PUT "${AUTH[@]}" "$API/api/users/$FRIEND_ID/follow") == 204 ]] && ok "demo follows $FRIEND_USER"
+curl -fsS "${AUTH[@]}" "$API/api/friends/$ME_ID/followers" | json "[(i['userId'], i['isFollowing'], i['followsYou'], i['isMutual']) for i in d['items']] == [('$FRIEND_ID', True, True, True)] and d['total'] == 1" | grep -q True && ok "followers list: $FRIEND_USER follows demo and demo follows back — mutual"
+curl -fsS "${AUTH[@]}" "$API/api/friends/$ME_ID/following" | json "[(i['userId'], i['isMutual']) for i in d['items']] == [('$FRIEND_ID', True)]" | grep -q True && ok "following list shows the mutual status"
+curl -fsS "${AUTH2[@]}" "$API/api/friends/$ME_ID/stats" | json "d['isFollowing'] and d['followsYou'] and d['isMutual']" | grep -q True && ok "stats: isMutual"
+REC=$(curl -fsS "${AUTH[@]}" "$API/api/friends/recommendations?limit=10")
+echo "$REC" | json "'$BUDDY_ID' in [i['userId'] for i in d['items']]" | grep -q True && ok "demo is offered $BUDDY_USER (friend of a friend)"
+echo "$REC" | json "[i['mutualFriends'] for i in d['items'] if i['userId'] == '$BUDDY_ID'] == [1]" | grep -q True && ok "1 mutual friend"
+curl -fsS "${AUTH[@]}" "$API/api/users?ids=$BUDDY_ID" | json "[i['username'] for i in d['items']] == ['$BUDDY_USER']" | grep -q True && ok "profile resolved by the users service (batch ids)"
+[[ $(curl -s -o /dev/null -w '%{http_code}' -X PUT "${AUTH[@]}" "$API/api/users/$BUDDY_ID/follow") == 204 ]] && ok "demo follows $BUDDY_USER"
+curl -fsS "${AUTH[@]}" "$API/api/friends/recommendations?limit=10" | json "'$BUDDY_ID' not in [i['userId'] for i in d['items']]" | grep -q True && ok "followed users are no longer recommended"
+[[ $(curl -s -o /dev/null -w '%{http_code}' -X DELETE "${AUTH[@]}" "$API/api/users/$BUDDY_ID/follow") == 204 ]] && ok "unfollowed again"
+[[ $(curl -s -o /dev/null -w '%{http_code}' -X DELETE "${AUTH[@]}" "$API/api/users/$FRIEND_ID/follow") == 204 ]] && ok "demo unfollowed $FRIEND_USER"
+[[ $(curl -s -o /dev/null -w '%{http_code}' -X PUT "${AUTH[@]}" "$API/api/users/nobody-at-all/follow") == 404 ]] && ok "following an unknown profile — 404"
+[[ $(curl -s -o /dev/null -w '%{http_code}' -X PUT "${AUTH[@]}" "$API/api/users/$ME_ID/follow") == 400 ]] && ok "following yourself — 400"
 
 step "Unfollow → clip disappears from the feed"
 [[ $(curl -s -o /dev/null -w '%{http_code}' -X DELETE "${AUTH2[@]}" "$API/api/users/$ME_ID/follow") == 204 ]] && ok "unfollowed (204)"

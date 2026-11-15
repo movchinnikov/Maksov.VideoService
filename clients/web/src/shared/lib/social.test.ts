@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { mergeFirstPage, mergePages } from './pages';
 import { relativeTime } from './relativeTime';
 import { checkComment, COMMENT_MAX, initial, memoPromise, normalizeQuery, thumbLabel } from './social';
-import { commentsPath, isOwnProfilePath, profilePath, videoPath } from './urls';
+import { commentsPath, followersPath, followingPath, isOwnProfilePath, profilePath, videoPath } from './urls';
 
 const now = Date.parse('2026-01-01T12:00:00Z');
 const ago = (s: number) => new Date(now - s * 1000).toISOString();
@@ -72,5 +72,12 @@ describe('memoPromise', () => {
     const store = new Map<string, Promise<number | null>>();
     await memoPromise(store, 'n', () => Promise.resolve(null), (v) => v !== null);
     expect(store.has('n')).toBe(false);
+  });
+});
+
+describe('follow list paths', () => {
+  it('builds paths', () => {
+    expect(followersPath('a')).toBe('/u/a/followers');
+    expect(followingPath('a')).toBe('/u/a/following');
   });
 });

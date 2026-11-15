@@ -1,11 +1,12 @@
 openapi: 3.1.0
 info:
   title: VideoService Users (internal)
-  version: 0.1.0
+  version: 0.2.0
   description: |
     Internal API of the users service. Reachable only by other services inside the compose network (`http://users:8080`),
-    protected by the `X-Internal-Key` header (`INTERNAL_API_KEY` variable). Not published through the gateway (404).
-    The service's public routes (`/api/users/**`) are described in `api.yaml`.
+    protected by the `X-Internal-Key` header (`INTERNAL_API_KEY`). Not published through the gateway (404).
+    Public routes of the service (`/api/users/**`) are described in `api.yaml`.
+    Follows and the following-ids query moved to the friends service (see `internal-friends.yaml`, ADR 0010).
 servers:
   - url: http://users:8080
 security:
@@ -13,14 +14,14 @@ security:
 tags:
   - name: Internal
 paths:
-  /internal/v1/users/{id}/following-ids:
+  /internal/v1/users/{id}/exists:
     get:
       tags: [Internal]
-      operationId: GetFollowingIds
-      summary: Who the user follows (IDs)
+      operationId: ProfileExists
+      summary: Does a profile exist
       description: |
-        Consumed by the videos service (feed `GET /api/feed`): the response is cached for 20 s; if users is unavailable, the feed degrades
-        to the user's own videos. The list is capped at 5000 IDs. An unknown user yields an empty list.
+        Consumed by the friends service before creating a follow (a follow requires an existing profile).
+        Positive answers are cached by the caller for 5 minutes; if users is unavailable, following fails with 503.
       parameters:
         - name: id
           in: path
@@ -28,17 +29,9 @@ paths:
           description: User ID (Keycloak `sub`)
           schema: { type: string, maxLength: 128 }
       responses:
-        '200':
-          description: IDs of followed users
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [ids]
-                properties:
-                  ids: { type: array, items: { type: string } }
-        '401':
-          description: Missing or invalid `X-Internal-Key`
+        '204': { description: The profile exists }
+        '404': { description: No such profile }
+        '401': { description: Missing or invalid `X-Internal-Key` }
 components:
   securitySchemes:
     internalKey:

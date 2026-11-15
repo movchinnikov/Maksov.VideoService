@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!-- Friends service host: composition root. -->
+  <PropertyGroup>
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Maksov.VideoService.Friends.Bll\Maksov.VideoService.Friends.Bll.csproj" />
+    <ProjectReference Include="..\Maksov.VideoService.Friends.Dal\Maksov.VideoService.Friends.Dal.csproj" />
+    <ProjectReference Include="..\Maksov.VideoService.Friends.Features.Friends\Maksov.VideoService.Friends.Features.Friends.csproj" />
+    <PackageReference Include="Maksov.VideoService.Web" />
+    <PackageReference Include="Maksov.VideoService.BuildingBlocks" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Http" />
+  </ItemGroup>
+
+</Project>

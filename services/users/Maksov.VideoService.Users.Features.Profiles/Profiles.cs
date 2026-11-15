@@ -6,36 +6,31 @@ using Maksov.VideoService.Web;
 
 namespace Maksov.VideoService.Users.Features.Profiles;
 
-/// <summary>Own profile ("me"): with login and counters.</summary>
-public sealed record ProfileDto(string Id, string Username, string DisplayName, string Bio, DateTimeOffset CreatedAt, int FollowersCount, int FollowingCount);
+/// <summary>Own profile ("me").</summary>
+public sealed record ProfileDto(string Id, string Username, string DisplayName, string Bio, DateTimeOffset CreatedAt);
 
 /// <summary>Another person's profile: login is visible (as on Instagram), plus counters and the "you follow" flag.</summary>
-public sealed record PublicProfileDto(string Id, string Username, string DisplayName, string Bio, int FollowersCount, int FollowingCount, bool IsFollowing);
+public sealed record PublicProfileDto(string Id, string Username, string DisplayName, string Bio);
 
-public sealed record UserSummaryDto(string Id, string Username, string DisplayName, string Bio, bool IsFollowing);
+public sealed record UserSummaryDto(string Id, string Username, string DisplayName, string Bio);
 
 public sealed record UserSearchResponse(IReadOnlyList<UserSummaryDto> Items);
 
 public sealed record UpdateProfileRequest(string? DisplayName, string? Bio);
-
-/// <summary>Followee identifiers for the internal consumer (the feed in the videos service).</summary>
-public sealed record FollowingIdsResponse(IReadOnlyList<string> Ids);
 
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]
 [JsonSerializable(typeof(ProfileDto))]
 [JsonSerializable(typeof(PublicProfileDto))]
 [JsonSerializable(typeof(UserSearchResponse))]
 [JsonSerializable(typeof(UpdateProfileRequest))]
-[JsonSerializable(typeof(FollowingIdsResponse))]
 internal sealed partial class ProfilesJsonContext : JsonSerializerContext;
 
 internal sealed class GetMeHandler(IProfileRepository profiles)
 {
     public async Task<ProfileDto> HandleAsync(string userId, string username, CancellationToken ct)
     {
-        await profiles.GetOrCreateAsync(userId, username, ct);
-        var v = (await profiles.GetViewAsync(userId, userId, ct))!;
-        return new ProfileDto(v.Profile.UserId, v.Profile.Username, v.Profile.DisplayName, v.Profile.Bio, v.Profile.CreatedAt, v.FollowersCount, v.FollowingCount);
+        var p = await profiles.GetOrCreateAsync(userId, username, ct);
+        return new ProfileDto(p.UserId, p.Username, p.DisplayName, p.Bio, p.CreatedAt);
     }
 }
 
@@ -75,12 +70,12 @@ internal sealed class UpdateMeHandler(IProfileRepository profiles, GetMeHandler 
 
 internal sealed class GetProfileHandler(IProfileRepository profiles)
 {
-    public async Task<Result<PublicProfileDto>> HandleAsync(string userId, string viewerId, CancellationToken ct)
+    public async Task<Result<PublicProfileDto>> HandleAsync(string userId, CancellationToken ct)
     {
-        var v = await profiles.GetViewAsync(userId, viewerId, ct);
-        return v is null
+        var p = await profiles.GetAsync(userId, ct);
+        return p is null
             ? DomainError.NotFound("profile_not_found", "Profile not found")
-            : new PublicProfileDto(v.Profile.UserId, v.Profile.Username, v.Profile.DisplayName, v.Profile.Bio, v.FollowersCount, v.FollowingCount, v.IsFollowing);
+            : new PublicProfileDto(p.UserId, p.Username, p.DisplayName, p.Bio);
     }
 }
 
@@ -89,9 +84,21 @@ internal sealed class SearchUsersHandler(IProfileRepository profiles)
     public const int DefaultLimit = 20;
     public const int MaxLimit = 50;
     public const int MaxQueryLength = 60;
+    public const int MaxIds = 50;
 
-    public async Task<UserSearchResponse> HandleAsync(string viewerId, string? query, int? limit, CancellationToken ct)
+    public async Task<UserSearchResponse> HandleAsync(string viewerId, string? query, string? ids, int? limit, CancellationToken ct)
     {
+        // Batch lookup by identifiers (e.g. recommendations from the friends service).
+        if (!string.IsNullOrWhiteSpace(ids))
+        {
+            var wanted = ids.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Distinct(StringComparer.Ordinal)
+                .Take(MaxIds)
+                .ToArray();
+            var found = await profiles.GetManyAsync(wanted, ct);
+            return new UserSearchResponse(found.Select(static r => new UserSummaryDto(r.UserId, r.Username, r.DisplayName, r.Bio)).ToList());
+        }
+
         // Empty query means empty result: we never return "all users".
         var q = query?.Trim();
         if (string.IsNullOrEmpty(q))
@@ -101,35 +108,8 @@ internal sealed class SearchUsersHandler(IProfileRepository profiles)
 
         q = q.Length > MaxQueryLength ? q[..MaxQueryLength] : q;
         var rows = await profiles.SearchAsync(q, viewerId, Math.Clamp(limit ?? DefaultLimit, 1, MaxLimit), ct);
-        return new UserSearchResponse(rows.Select(static r => new UserSummaryDto(r.UserId, r.Username, r.DisplayName, r.Bio, r.IsFollowing)).ToList());
+        return new UserSearchResponse(rows.Select(static r => new UserSummaryDto(r.UserId, r.Username, r.DisplayName, r.Bio)).ToList());
     }
-}
-
-internal sealed class FollowHandler(IProfileRepository profiles)
-{
-    public async Task<Result<bool>> FollowAsync(string followerId, string followeeId, CancellationToken ct)
-    {
-        if (string.Equals(followerId, followeeId, StringComparison.Ordinal))
-        {
-            return DomainError.Validation("userId", "You cannot follow yourself.");
-        }
-
-        return await profiles.FollowAsync(followerId, followeeId, ct) ? true : DomainError.NotFound("profile_not_found", "Profile not found");
-    }
-
-    public async Task<Result<bool>> UnfollowAsync(string followerId, string followeeId, CancellationToken ct)
-    {
-        await profiles.UnfollowAsync(followerId, followeeId, ct);
-        return true;
-    }
-}
-
-internal sealed class GetFollowingIdsHandler(IProfileRepository profiles)
-{
-    private const int Max = 5000;
-
-    public async Task<FollowingIdsResponse> HandleAsync(string userId, CancellationToken ct) =>
-        new(await profiles.GetFollowingIdsAsync(userId, Max, ct));
 }
 
 /// <summary>Registration and routes of the Profiles feature (public and internal).</summary>
@@ -142,8 +122,6 @@ public static class ProfilesFeatures
         services.AddSingleton<UpdateMeHandler>();
         services.AddSingleton<GetProfileHandler>();
         services.AddSingleton<SearchUsersHandler>();
-        services.AddSingleton<FollowHandler>();
-        services.AddSingleton<GetFollowingIdsHandler>();
         return services;
     }
 
@@ -170,34 +148,22 @@ public static class ProfilesFeatures
             return result.IsSuccess ? TypedResults.Ok(result.Value) : result.Error!.ToProblem();
         }).WithName("UpdateMe");
 
-        users.MapGet("/", async (string? query, int? limit, HttpContext http, SearchUsersHandler handler, CancellationToken ct) =>
-            TypedResults.Ok(await handler.HandleAsync(http.User.UserId(), query, limit, ct)))
+        users.MapGet("/", async (string? query, string? ids, int? limit, HttpContext http, SearchUsersHandler handler, CancellationToken ct) =>
+            TypedResults.Ok(await handler.HandleAsync(http.User.UserId(), query, ids, limit, ct)))
             .WithName("SearchUsers");
 
         users.MapGet("/{id}", async (string id, HttpContext http, GetProfileHandler handler, CancellationToken ct) =>
         {
-            var result = await handler.HandleAsync(id, http.User.UserId(), ct);
+            var result = await handler.HandleAsync(id, ct);
             return result.IsSuccess ? TypedResults.Ok(result.Value) : result.Error!.ToProblem();
         }).WithName("GetProfile");
 
-        users.MapPut("/{id}/follow", async (string id, HttpContext http, FollowHandler handler, CancellationToken ct) =>
-        {
-            var result = await handler.FollowAsync(http.User.UserId(), id, ct);
-            return result.IsSuccess ? TypedResults.NoContent() : result.Error!.ToProblem();
-        }).WithName("Follow");
-
-        users.MapDelete("/{id}/follow", async (string id, HttpContext http, FollowHandler handler, CancellationToken ct) =>
-        {
-            var result = await handler.UnfollowAsync(http.User.UserId(), id, ct);
-            return result.IsSuccess ? TypedResults.NoContent() : result.Error!.ToProblem();
-        }).WithName("Unfollow");
-
-        // Internal route: key only, not published through the gateway.
+        // Internal route: only with the key, not published through the gateway.
         app.MapGroup("/internal/v1").WithTags("Internal")
-            .MapGet("/users/{id}/following-ids", async (string id, GetFollowingIdsHandler handler, CancellationToken ct) =>
-                TypedResults.Ok(await handler.HandleAsync(id, ct)))
+            .MapGet("/users/{id}/exists", async (string id, IProfileRepository profiles, CancellationToken ct) =>
+                await profiles.ExistsAsync(id, ct) ? Results.NoContent() : Results.NotFound())
             .RequireInternalKey()
-            .WithName("GetFollowingIds");
+            .WithName("ProfileExists");
 
         return app;
     }

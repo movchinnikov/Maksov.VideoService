@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- Feed feature: the follows feed (GetFeed) and a person's ready videos for the profile (ListUserVideos).
+  <!-- Catalog feature: a person's ready videos for the profile (ListUserVideos), batch cards by ids (GetCards) and the internal "ready videos by owners" query used by the feed service.
        Depends on ports (Bll) and the shared web layer; does not depend on Dal, the host or other features. -->
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />

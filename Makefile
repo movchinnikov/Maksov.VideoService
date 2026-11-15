@@ -30,7 +30,7 @@ up: env-sync ## Bring the stack up from scratch and wait until healthy
 	$(COMPOSE) up -d --build --wait --wait-timeout 300
 	@echo ""
 	@echo "  Web:       http://localhost:3000   (user: demo, password: DEMO_PASSWORD from .env)"
-	@echo "  API:       http://localhost:8081   (gateway → videos, users, analysis, comments)"
+	@echo "  API:       http://localhost:8081   (gateway → videos, users, analysis, comments, friends, feed)"
 	@echo "  Keycloak:  http://localhost:8080   (admin — see .env)"
 	@echo "  MinIO:     http://localhost:9001"
 
@@ -70,7 +70,7 @@ test-dotnet: pack ## .NET: tests of each solution (unit, API, integration with f
 	@docker network create videoservice-test >/dev/null 2>&1 || true
 	@docker rm -f videoservice-test-pg >/dev/null 2>&1 || true
 	docker run -d --rm --name videoservice-test-pg --network videoservice-test --tmpfs /var/lib/postgresql \
-		-e POSTGRES_PASSWORD=$(TEST_PG_PASSWORD) -e POSTGRES_DB=test postgres:18.7-alpine >/dev/null
+		-e POSTGRES_PASSWORD=$(TEST_PG_PASSWORD) -e POSTGRES_DB=test pgvector/pgvector:0.8.1-pg18 >/dev/null
 	@until docker exec videoservice-test-pg pg_isready -U postgres -d test >/dev/null 2>&1; do sleep 1; done
 	@status=0; for s in $(SOLUTIONS); do \
 	  echo ""; echo "== tests: $$s"; \

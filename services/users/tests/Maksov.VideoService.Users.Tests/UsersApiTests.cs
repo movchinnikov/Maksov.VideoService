@@ -33,7 +33,6 @@ public sealed class UsersFactory : WebApplicationFactory<Program>
 public sealed class InMemoryProfiles : IProfileRepository
 {
     private readonly ConcurrentDictionary<string, ProfileRecord> _items = new();
-    private readonly ConcurrentDictionary<(string Follower, string Followee), byte> _follows = new();
 
     public Task<ProfileRecord> GetOrCreateAsync(string userId, string username, CancellationToken cancellationToken)
     {
@@ -59,16 +58,17 @@ public sealed class InMemoryProfiles : IProfileRepository
         return Task.FromResult<ProfileRecord?>(updated);
     }
 
-    public Task<ProfileView?> GetViewAsync(string userId, string viewerId, CancellationToken cancellationToken)
-    {
-        if (!_items.TryGetValue(userId, out var p))
-        {
-            return Task.FromResult<ProfileView?>(null);
-        }
+    public Task<bool> ExistsAsync(string userId, CancellationToken cancellationToken) =>
+        Task.FromResult(_items.ContainsKey(userId));
 
-        var followers = _follows.Keys.Count(k => k.Followee == userId);
-        var following = _follows.Keys.Count(k => k.Follower == userId);
-        return Task.FromResult<ProfileView?>(new ProfileView(p, followers, following, _follows.ContainsKey((viewerId, userId))));
+    public Task<IReadOnlyList<ProfileSummary>> GetManyAsync(IReadOnlyCollection<string> userIds, CancellationToken cancellationToken)
+    {
+        IReadOnlyList<ProfileSummary> found = _items.Values
+            .Where(p => userIds.Contains(p.UserId))
+            .OrderBy(p => p.Username, StringComparer.Ordinal)
+            .Select(p => new ProfileSummary(p.UserId, p.Username, p.DisplayName, p.Bio))
+            .ToList();
+        return Task.FromResult(found);
     }
 
     public Task<IReadOnlyList<ProfileSummary>> SearchAsync(string query, string viewerId, int limit, CancellationToken cancellationToken)
@@ -78,32 +78,9 @@ public sealed class InMemoryProfiles : IProfileRepository
                 && (p.Username.StartsWith(query, StringComparison.OrdinalIgnoreCase) || p.DisplayName.StartsWith(query, StringComparison.OrdinalIgnoreCase)))
             .OrderBy(p => p.Username, StringComparer.Ordinal)
             .Take(limit)
-            .Select(p => new ProfileSummary(p.UserId, p.Username, p.DisplayName, p.Bio, _follows.ContainsKey((viewerId, p.UserId))))
+            .Select(p => new ProfileSummary(p.UserId, p.Username, p.DisplayName, p.Bio))
             .ToList();
         return Task.FromResult(found);
-    }
-
-    public Task<bool> FollowAsync(string followerId, string followeeId, CancellationToken cancellationToken)
-    {
-        if (!_items.ContainsKey(followeeId))
-        {
-            return Task.FromResult(false);
-        }
-
-        _follows.TryAdd((followerId, followeeId), 0);
-        return Task.FromResult(true);
-    }
-
-    public Task UnfollowAsync(string followerId, string followeeId, CancellationToken cancellationToken)
-    {
-        _follows.TryRemove((followerId, followeeId), out _);
-        return Task.CompletedTask;
-    }
-
-    public Task<IReadOnlyList<string>> GetFollowingIdsAsync(string userId, int limit, CancellationToken cancellationToken)
-    {
-        IReadOnlyList<string> ids = _follows.Keys.Where(k => k.Follower == userId).Select(k => k.Followee).Take(limit).ToList();
-        return Task.FromResult(ids);
     }
 }
 
@@ -192,7 +169,7 @@ public sealed class UsersApiTests : IClassFixture<UsersFactory>
 
         Assert.Equal("Erin", profile.GetProperty("displayName").GetString());
         Assert.Equal("erin", profile.GetProperty("username").GetString());
-        Assert.False(profile.GetProperty("isFollowing").GetBoolean());
+        Assert.False(profile.TryGetProperty("isFollowing", out _));
         Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
     }
 
@@ -210,49 +187,24 @@ public sealed class UsersApiTests : IClassFixture<UsersFactory>
     }
 
     [Fact]
-    public async Task AC_users_07_follow_updates_counts_and_is_idempotent()
+    public async Task AC_users_07_profiles_carry_no_follow_data()
     {
-        var a = "fa-" + Guid.NewGuid().ToString("N");
-        var b = "fb-" + Guid.NewGuid().ToString("N");
-        using var alice = _factory.ClientFor(a);
-        using var bob = _factory.ClientFor(b);
-        await alice.GetAsync("/api/users/me", Ct);
-        await bob.GetAsync("/api/users/me", Ct);
+        using var alice = _factory.ClientFor("pa-" + Guid.NewGuid().ToString("N"));
 
-        using var first = await alice.PutAsync($"/api/users/{b}/follow", null, Ct);
-        using var second = await alice.PutAsync($"/api/users/{b}/follow", null, Ct);
-        var bobAsSeenByAlice = await alice.GetFromJsonAsync<JsonElement>($"/api/users/{b}", Json, Ct);
-        var aliceMe = await alice.GetFromJsonAsync<JsonElement>("/api/users/me", Json, Ct);
-        var bobMe = await bob.GetFromJsonAsync<JsonElement>("/api/users/me", Json, Ct);
+        var me = await alice.GetFromJsonAsync<JsonElement>("/api/users/me", Json, Ct);
 
-        Assert.Equal(HttpStatusCode.NoContent, first.StatusCode);
-        Assert.Equal(HttpStatusCode.NoContent, second.StatusCode);
-        Assert.True(bobAsSeenByAlice.GetProperty("isFollowing").GetBoolean());
-        Assert.Equal(1, bobAsSeenByAlice.GetProperty("followersCount").GetInt32());
-        Assert.Equal(1, aliceMe.GetProperty("followingCount").GetInt32());
-        Assert.Equal(1, bobMe.GetProperty("followersCount").GetInt32());
-
-        using var unfollow = await alice.DeleteAsync($"/api/users/{b}/follow", Ct);
-        using var unfollowAgain = await alice.DeleteAsync($"/api/users/{b}/follow", Ct);
-        var after = await alice.GetFromJsonAsync<JsonElement>($"/api/users/{b}", Json, Ct);
-
-        Assert.Equal(HttpStatusCode.NoContent, unfollow.StatusCode);
-        Assert.Equal(HttpStatusCode.NoContent, unfollowAgain.StatusCode);
-        Assert.False(after.GetProperty("isFollowing").GetBoolean());
-        Assert.Equal(0, after.GetProperty("followersCount").GetInt32());
+        Assert.False(me.TryGetProperty("followersCount", out _));
+        Assert.False(me.TryGetProperty("followingCount", out _));
     }
 
     [Fact]
-    public async Task AC_users_08_cannot_follow_self_or_unknown_user()
+    public async Task AC_users_08_follow_routes_are_not_served_by_users()
     {
         using var client = _factory.ClientFor("loner-" + Guid.NewGuid().ToString("N"));
-        var me = await client.GetFromJsonAsync<JsonElement>("/api/users/me", Json, Ct);
 
-        using var self = await client.PutAsync($"/api/users/{me.GetProperty("id").GetString()}/follow", null, Ct);
-        using var unknown = await client.PutAsync("/api/users/nobody-at-all/follow", null, Ct);
+        using var put = await client.PutAsync("/api/users/someone/follow", null, Ct);
 
-        Assert.Equal(HttpStatusCode.BadRequest, self.StatusCode);
-        Assert.Equal(HttpStatusCode.NotFound, unknown.StatusCode);
+        Assert.True(put.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.MethodNotAllowed);
     }
 
     [Fact]
@@ -263,7 +215,6 @@ public sealed class UsersApiTests : IClassFixture<UsersFactory>
         using var target = _factory.ClientFor($"zed{tag}");
         await seeker.GetAsync("/api/users/me", Ct);
         await target.GetAsync("/api/users/me", Ct);
-        await seeker.PutAsync($"/api/users/zed{tag}/follow", null, Ct);
 
         var found = await seeker.GetFromJsonAsync<JsonElement>($"/api/users?query=ZED{tag}", Json, Ct);
         var self = await seeker.GetFromJsonAsync<JsonElement>($"/api/users?query=seeker{tag}", Json, Ct);
@@ -271,31 +222,49 @@ public sealed class UsersApiTests : IClassFixture<UsersFactory>
 
         var item = Assert.Single(found.GetProperty("items").EnumerateArray());
         Assert.Equal($"zed{tag}", item.GetProperty("username").GetString());
-        Assert.True(item.GetProperty("isFollowing").GetBoolean());
         Assert.Empty(self.GetProperty("items").EnumerateArray());
         Assert.Empty(empty.GetProperty("items").EnumerateArray());
     }
 
     [Fact]
-    public async Task AC_users_10_internal_following_ids_require_the_key()
+    public async Task AC_users_10_batch_lookup_by_ids()
     {
-        var a = "ia-" + Guid.NewGuid().ToString("N");
-        var b = "ib-" + Guid.NewGuid().ToString("N");
+        var a = "ba-" + Guid.NewGuid().ToString("N");
+        var b = "bb-" + Guid.NewGuid().ToString("N");
         using var alice = _factory.ClientFor(a);
         using var bob = _factory.ClientFor(b);
         await alice.GetAsync("/api/users/me", Ct);
         await bob.GetAsync("/api/users/me", Ct);
-        await alice.PutAsync($"/api/users/{b}/follow", null, Ct);
 
+        var found = await alice.GetFromJsonAsync<JsonElement>($"/api/users?ids={a},{b},missing", Json, Ct);
+
+        Assert.Equal(new[] { a, b }.Order(StringComparer.Ordinal), found.GetProperty("items").EnumerateArray().Select(i => i.GetProperty("id").GetString()!).Order(StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public async Task AC_users_11_internal_exists_requires_the_key()
+    {
+        var a = "ea-" + Guid.NewGuid().ToString("N");
+        using var alice = _factory.ClientFor(a);
+        await alice.GetAsync("/api/users/me", Ct);
         using var anonymous = _factory.CreateClient();
-        using var noKey = await anonymous.GetAsync($"/internal/v1/users/{a}/following-ids", Ct);
-        using var request = new HttpRequestMessage(HttpMethod.Get, $"/internal/v1/users/{a}/following-ids");
-        request.Headers.Add("X-Internal-Key", UsersFactory.InternalKey);
-        using var withKey = await anonymous.SendAsync(request, Ct);
-        var body = await withKey.Content.ReadFromJsonAsync<JsonElement>(Json, Ct);
+
+        HttpRequestMessage Request(string id, string? key)
+        {
+            var request = new HttpRequestMessage(HttpMethod.Get, $"/internal/v1/users/{id}/exists");
+            if (key is not null)
+            {
+                request.Headers.Add("X-Internal-Key", key);
+            }
+            return request;
+        }
+
+        using var noKey = await anonymous.SendAsync(Request(a, null), Ct);
+        using var exists = await anonymous.SendAsync(Request(a, UsersFactory.InternalKey), Ct);
+        using var missing = await anonymous.SendAsync(Request("nobody-" + Guid.NewGuid().ToString("N"), UsersFactory.InternalKey), Ct);
 
         Assert.Equal(HttpStatusCode.Unauthorized, noKey.StatusCode);
-        Assert.Equal(HttpStatusCode.OK, withKey.StatusCode);
-        Assert.Equal([b], body.GetProperty("ids").EnumerateArray().Select(i => i.GetString()));
+        Assert.Equal(HttpStatusCode.NoContent, exists.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
     }
 }

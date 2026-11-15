@@ -1,0 +1,46 @@
+openapi: 3.1.0
+info:
+  title: VideoService Friends (internal)
+  version: 0.1.0
+  description: |
+    Internal API of the friends service (social graph, ADR 0010). Reachable only by other services inside the compose network
+    (`http://friends:8080`), protected by the `X-Internal-Key` header (`INTERNAL_API_KEY`). Not published through the gateway (404).
+    Public routes of the service (`PUT|DELETE /api/users/{id}/follow`, `/api/friends/**`) are described in `api.yaml`.
+servers:
+  - url: http://friends:8080
+security:
+  - internalKey: []
+tags:
+  - name: Internal
+paths:
+  /internal/v1/friends/{userId}/following-ids:
+    get:
+      tags: [Internal]
+      operationId: GetFollowingIds
+      summary: Who the user follows (IDs)
+      description: |
+        Consumed by the feed service (`GET /api/feed`): the response is cached there for 20 s; if friends is unavailable, the feed
+        degrades to the user's own videos. The list is capped at 5000 IDs. An unknown user yields an empty list.
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          description: User ID (Keycloak `sub`)
+          schema: { type: string, maxLength: 128 }
+      responses:
+        '200':
+          description: IDs of followed users
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ids]
+                properties:
+                  ids: { type: array, items: { type: string } }
+        '401': { description: Missing or invalid `X-Internal-Key` }
+components:
+  securitySchemes:
+    internalKey:
+      type: apiKey
+      in: header
+      name: X-Internal-Key

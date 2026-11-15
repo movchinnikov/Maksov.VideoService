@@ -1,5 +1,7 @@
 # Threat model: lesson 1 (upload, transcoding, playback)
 
+> State at the git tag `lesson-01`. The `friends` and `feed` services and pgvector are covered in [threat-model-lesson-02.md](threat-model-lesson-02.md).
+
 Trust boundaries: browser ↔ web/gateway, gateway ↔ services (videos, users, analysis, comments), media-worker → analysis and comments (outbox, internal HTTP), videos → users (following list for the feed), browser ↔ MinIO (presigned), browser ↔ Keycloak, services/workers ↔ Postgres (own DB per service) and MinIO, workers ↔ ffmpeg (untrusted input). Architecture — [ADR 0006](../adr/0006-microservices-gateway-videos-users-analysis.md).
 
 | # | STRIDE | Threat | Mitigation | Verification |

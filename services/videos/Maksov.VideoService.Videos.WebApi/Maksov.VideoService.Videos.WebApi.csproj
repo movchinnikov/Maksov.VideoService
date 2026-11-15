@@ -12,7 +12,7 @@
     <ProjectReference Include="..\Maksov.VideoService.Videos.Bll\Maksov.VideoService.Videos.Bll.csproj" />
     <ProjectReference Include="..\Maksov.VideoService.Videos.Dal\Maksov.VideoService.Videos.Dal.csproj" />
     <ProjectReference Include="..\Maksov.VideoService.Videos.Features.Videos\Maksov.VideoService.Videos.Features.Videos.csproj" />
-    <ProjectReference Include="..\Maksov.VideoService.Videos.Features.Feed\Maksov.VideoService.Videos.Features.Feed.csproj" />
+    <ProjectReference Include="..\Maksov.VideoService.Videos.Features.Catalog\Maksov.VideoService.Videos.Features.Catalog.csproj" />
     <PackageReference Include="Maksov.VideoService.BuildingBlocks" />
   </ItemGroup>
 

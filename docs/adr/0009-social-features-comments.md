@@ -3,6 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-11-15
 - **Lesson / feature:** lesson-01 (Instagram-style social features)
+- **Note:** follows, the feed and recommended friends moved out of `users`/`videos` into the new `friends` and `feed` services (lesson 2, [ADR 0010](0010-friends-and-feed-services.md)). Where this ADR says the feed is built in `videos` from `users` follows ("Subscriptions and search", "Feed and profile grid"), read: `friends` owns follows, `feed` returns video ids, `videos` serves cards. Visibility, comments, deletion and the per-subscriber outbox are unchanged.
 - **Related:** [ADR 0006](0006-microservices-gateway-videos-users-analysis.md) (services, outbox), [ADR 0007](0007-vertical-first.md), [ADR 0008](0008-separate-solutions-nuget.md)
 
 ## Context

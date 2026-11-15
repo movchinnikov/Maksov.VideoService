@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Feed service business logic: ports. Knows nothing about ASP.NET or HTTP. -->
+  <ItemGroup>
+    <PackageReference Include="Maksov.VideoService.Primitives" />
+  </ItemGroup>
+
+</Project>

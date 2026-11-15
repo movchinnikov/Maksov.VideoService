@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!-- Feed service host: composition root. -->
+  <PropertyGroup>
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Maksov.VideoService.Feed.Bll\Maksov.VideoService.Feed.Bll.csproj" />
+    <ProjectReference Include="..\Maksov.VideoService.Feed.Dal\Maksov.VideoService.Feed.Dal.csproj" />
+    <ProjectReference Include="..\Maksov.VideoService.Feed.Features.Feed\Maksov.VideoService.Feed.Features.Feed.csproj" />
+    <PackageReference Include="Maksov.VideoService.Web" />
+    <PackageReference Include="Maksov.VideoService.BuildingBlocks" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Http" />
+  </ItemGroup>
+
+</Project>

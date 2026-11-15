@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
+    <PackageReference Include="xunit.v3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\Maksov.VideoService.Feed.WebApi\Maksov.VideoService.Feed.WebApi.csproj" />
+    <ProjectReference Include="..\..\Maksov.VideoService.Feed.Dal\Maksov.VideoService.Feed.Dal.csproj" />
+    <PackageReference Include="Maksov.VideoService.TestSupport" />
+  </ItemGroup>
+
+</Project>
