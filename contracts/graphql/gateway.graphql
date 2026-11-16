@@ -1,0 +1,126 @@
+# GraphQL contract of the gateway (ADR 0012). POST /graphql, Authorization: Bearer <token> (same token as REST).
+# Queries and mutations only. Limits: nesting depth 8, page size 1..50 (feed 1..30), request body 64 KiB.
+# Introspection is available only when GraphQL:AllowIntrospection=true.
+#
+# Errors carry extensions.code: NOT_FOUND | VALIDATION | UNAVAILABLE | FORBIDDEN. Partial data is allowed:
+# a failing optional field becomes null with an error entry.
+
+scalar UUID
+scalar DateTime
+
+type Query {
+  me: User!
+  user(id: String!): User!
+  "Batch lookup by ids (at most 50) or prefix search by query."
+  users(query: String, ids: [String!], limit: Int): [User!]!
+  video(id: UUID!): Video!
+  feed(cursor: String, limit: Int): VideoPage!
+  userVideos(userId: String!, cursor: String, limit: Int): VideoPage!
+  recommendations(limit: Int): [Recommendation!]!
+  followers(userId: String!, cursor: String, limit: Int): RelationPage!
+  following(userId: String!, cursor: String, limit: Int): RelationPage!
+}
+
+type Mutation {
+  likeVideo(videoId: UUID!): LikeInfo!
+  unlikeVideo(videoId: UUID!): LikeInfo!
+  likeComment(videoId: UUID!, commentId: UUID!): LikeInfo!
+  unlikeComment(videoId: UUID!, commentId: UUID!): LikeInfo!
+  addComment(videoId: UUID!, text: String!): Comment!
+  deleteComment(videoId: UUID!, commentId: UUID!): Boolean!
+  "Idempotent; returns the fresh counters of the followed person."
+  follow(userId: String!): FriendStats!
+  unfollow(userId: String!): FriendStats!
+}
+
+type User {
+  id: String!
+  username: String!
+  displayName: String!
+  bio: String!
+  stats: FriendStats!
+  videos(cursor: String, limit: Int): VideoPage!
+}
+
+type Video {
+  id: UUID!
+  title: String!
+  createdAt: DateTime!
+  durationMs: Int!
+  width: Int!
+  height: Int!
+  playback: Playback!
+  owner: User
+  likes: LikeInfo!
+  comments(cursor: String, limit: Int): CommentPage!
+  "Null while the description is not visible to the caller."
+  description: Description
+}
+
+type Playback {
+  dash: String!
+  hls: String!
+  poster: String!
+}
+
+type VideoPage {
+  items: [Video!]!
+  nextCursor: String
+}
+
+type Comment {
+  id: UUID!
+  videoId: UUID!
+  text: String!
+  createdAt: DateTime!
+  canDelete: Boolean!
+  author: User
+  likes: LikeInfo!
+}
+
+type CommentPage {
+  items: [Comment!]!
+  nextCursor: String
+  total: Int!
+}
+
+type LikeInfo {
+  count: Int!
+  likedByMe: Boolean!
+}
+
+type FriendStats {
+  followersCount: Int!
+  followingCount: Int!
+  isFollowing: Boolean!
+  followsYou: Boolean!
+  isMutual: Boolean!
+}
+
+type Relation {
+  followedAt: DateTime!
+  isFollowing: Boolean!
+  followsYou: Boolean!
+  isMutual: Boolean!
+  user: User
+}
+
+type RelationPage {
+  items: [Relation!]!
+  nextCursor: String
+  total: Int!
+}
+
+type Recommendation {
+  mutualFriends: Int!
+  similarity: Float!
+  user: User
+}
+
+type Description {
+  videoId: UUID!
+  status: String!
+  text: String
+  tags: [String!]!
+  updatedAt: DateTime!
+}

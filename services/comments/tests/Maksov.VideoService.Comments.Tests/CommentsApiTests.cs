@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Maksov.VideoService.Comments.Bll;
 using Maksov.VideoService.Comments.Bll.Ports;
 using Maksov.VideoService.TestSupport;
 using Microsoft.AspNetCore.Hosting;
@@ -37,6 +38,9 @@ public sealed class InMemoryComments : ICommentRepository
     private readonly ConcurrentDictionary<Guid, (string Owner, bool Deleted)> _videos = new();
     private readonly ConcurrentDictionary<Guid, CommentRecord> _comments = new();
 
+    /// <summary>Events the real adapter would write to the outbox (topic and payload).</summary>
+    public ConcurrentQueue<(string Topic, string Payload)> Events { get; } = new();
+
     public Task UpsertVideoAsync(Guid videoId, string ownerId, CancellationToken cancellationToken)
     {
         _videos.TryAdd(videoId, (ownerId, false));
@@ -56,8 +60,10 @@ public sealed class InMemoryComments : ICommentRepository
     public Task<string?> GetVideoOwnerAsync(Guid videoId, CancellationToken cancellationToken) =>
         Task.FromResult(_videos.TryGetValue(videoId, out var v) && !v.Deleted ? v.Owner : null);
 
-    public Task InsertAsync(NewComment comment, CancellationToken cancellationToken)
+    public Task InsertAsync(NewComment comment, string videoOwnerId, CancellationToken cancellationToken)
     {
+        Events.Enqueue((CommentEvents.AddedTopic, CommentEvents.AddedPayload(
+            Guid.CreateVersion7(), comment.CreatedAt, comment.Id, comment.VideoId, comment.AuthorId, videoOwnerId, comment.Text.Length)));
         _comments[comment.Id] = new CommentRecord(comment.Id, comment.VideoId, comment.AuthorId, comment.AuthorUsername, comment.Text, comment.CreatedAt);
         return Task.CompletedTask;
     }
@@ -79,12 +85,23 @@ public sealed class InMemoryComments : ICommentRepository
     public Task<CommentRecord?> GetAsync(Guid videoId, Guid commentId, CancellationToken cancellationToken) =>
         Task.FromResult(_comments.TryGetValue(commentId, out var c) && c.VideoId == videoId ? c : null);
 
-    public Task<bool> DeleteAsync(Guid videoId, Guid commentId, CancellationToken cancellationToken) =>
-        Task.FromResult(_comments.TryRemove(commentId, out _));
+    public Task<bool> DeleteAsync(Guid videoId, Guid commentId, string deletedBy, CancellationToken cancellationToken)
+    {
+        if (!_comments.TryRemove(commentId, out var removed))
+        {
+            return Task.FromResult(false);
+        }
+
+        Events.Enqueue((CommentEvents.DeletedTopic, CommentEvents.DeletedPayload(
+            Guid.CreateVersion7(), DateTimeOffset.UtcNow, commentId, videoId, removed.AuthorId, deletedBy)));
+        return Task.FromResult(true);
+    }
 }
 
 public sealed class CommentsApiTests(CommentsFactory factory) : IClassFixture<CommentsFactory>
 {
+    private static readonly string[] AddedThenDeleted = [CommentEvents.AddedTopic, CommentEvents.DeletedTopic];
+
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
@@ -208,6 +225,28 @@ public sealed class CommentsApiTests(CommentsFactory factory) : IClassFixture<Co
         Assert.Equal(HttpStatusCode.NoContent, own.StatusCode);
         Assert.Equal(HttpStatusCode.NoContent, byOwner.StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, again.StatusCode);
+    }
+
+    [Fact]
+    public async Task Added_and_deleted_comments_emit_events_without_the_text()
+    {
+        var owner = $"owner-{Guid.NewGuid():N}";
+        var id = await KnownVideoAsync(owner);
+        using var alice = factory.ClientFor("alice");
+        var commentId = (await PostAsync(alice, id, "a secret opinion")).GetProperty("id").GetGuid();
+        using var deleted = await alice.DeleteAsync($"/api/videos/{id}/comments/{commentId}", Ct);
+        using var again = await alice.DeleteAsync($"/api/videos/{id}/comments/{commentId}", Ct);
+
+        var mine = factory.Comments.Events.Where(e => e.Payload.Contains(commentId.ToString(), StringComparison.Ordinal)).ToList();
+
+        Assert.Equal(HttpStatusCode.NoContent, deleted.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, again.StatusCode);
+        Assert.Equal(AddedThenDeleted, mine.Select(e => e.Topic));
+        Assert.All(mine, e => Assert.DoesNotContain("secret", e.Payload, StringComparison.Ordinal));
+        var added = JsonElement.Parse(mine[0].Payload);
+        Assert.Equal(owner, added.GetProperty("videoOwnerId").GetString());
+        Assert.Equal(16, added.GetProperty("textLength").GetInt32());
+        Assert.Equal("alice", JsonElement.Parse(mine[1].Payload).GetProperty("deletedBy").GetString());
     }
 
     [Theory]

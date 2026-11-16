@@ -85,7 +85,7 @@ internal sealed class AddCommentHandler(ICommentRepository comments, TimeProvide
         }
 
         var comment = new NewComment(Guid.CreateVersion7(), videoId, authorId, authorUsername, request.Text!.Trim(), clock.GetUtcNow());
-        await comments.InsertAsync(comment, ct);
+        await comments.InsertAsync(comment, owner, ct);
         return Mapping.ToDto(new CommentRecord(comment.Id, comment.VideoId, comment.AuthorId, comment.AuthorUsername, comment.Text, comment.CreatedAt), authorId, owner);
     }
 }
@@ -102,7 +102,7 @@ internal sealed class DeleteCommentHandler(ICommentRepository comments)
             return DomainError.NotFound("comment_not_found", "Comment not found");
         }
 
-        await comments.DeleteAsync(videoId, commentId, ct);
+        await comments.DeleteAsync(videoId, commentId, viewerId, ct);
         return true;
     }
 }

@@ -7,7 +7,7 @@
 > The architecture was extended in [ADR 0006](0006-microservices-gateway-videos-users-analysis.md): the single API was split into a gateway and the videos, users, and analysis services.
 
 ## Context
-The first application of the series: a user signs in, uploads a video, it is transcoded into an ABR ladder and becomes available for viewing; the user sees a list of their videos. Constraints: local only, 16 GB / 8 CPU for the whole future stack, each lesson works without the following ones (Kafka appears in lesson 4).
+The first application of the series: a user signs in, uploads a video, it is transcoded into an ABR ladder and becomes available for viewing; the user sees a list of their videos. Constraints: local only, 16 GB / 8 CPU for the whole future stack, each lesson works without the following ones (Kafka appears in lesson 6).
 
 ## Decision
 ```mermaid
@@ -22,7 +22,7 @@ flowchart LR
 ```
 1. **Upload directly to MinIO** via presigned PUT (TTL 15 min, fixed key and Content-Type). The API does not proxy the file bytes.
 2. **Complete**: the API verifies the object (`HEAD`), and in one transaction moves the video to `uploaded`, enqueues a task in `transcode_jobs`, and calls `pg_notify`.
-3. **Postgres-based queue**: `FOR UPDATE SKIP LOCKED` + lease (`locked_until`) + `LISTEN/NOTIFY` for wake-up (fallback polling every 15 s). The `IJobQueue` port in the worker → in lesson 4 the adapter is swapped for Kafka without changing the slice.
+3. **Postgres-based queue**: `FOR UPDATE SKIP LOCKED` + lease (`locked_until`) + `LISTEN/NOTIFY` for wake-up (fallback polling every 15 s). The `IJobQueue` port in the worker → in lesson 6 the adapter is swapped for Kafka without changing the slice.
 4. **Transcoding**: a single ffmpeg pass, CMAF segments + DASH and HLS manifests (ADR 0002).
 5. **Playback**: the API streams manifests/segments from MinIO after checking the owner (check cached for 60 s).
 6. **Authorization**: Keycloak, JWT in the API (ADR 0003).
@@ -32,7 +32,7 @@ flowchart LR
 | Option | Pros | Cons | Why rejected |
 | --- | --- | --- | --- |
 | Upload through the API (multipart in .NET) | Simpler client | Bytes go through the API: memory, CPU, timeouts | Does not scale, contradicts resource economy |
-| Kafka already in lesson 1 | "Right" from the start | +1 GB RAM, schema registry, outbox — overloads the first lesson | Lesson 4 is entirely about events; the queue port makes the swap cheap |
+| Kafka already in lesson 1 | "Right" from the start | +1 GB RAM, schema registry, outbox — overloads the first lesson | Lesson 6 is entirely about events; the queue port makes the swap cheap |
 | Redis/RabbitMQ as the queue | Ready-made queue | Another service and "DB + broker" consistency (dual write) | Postgres is already there, the task is enqueued in the same transaction |
 | Public bucket for media | No load on the API | Videos accessible to anyone with the link | The lesson is about "my videos"; privacy matters more. Later — nginx `secure_link`/CDN signing |
 | Presigned URL per segment | API not in the data path | Manifests must be rewritten on the fly, URLs expire during playback | Complex; revisit when a CDN appears |
@@ -44,7 +44,7 @@ flowchart LR
 - Services: `api` (new), `media-worker` (new), `web` (new), Keycloak, MinIO, PostgreSQL.
 - `api` slices: `CreateUpload`, `CompleteUpload`, `ListMyVideos`, `GetVideo`, `StreamMedia`. `media-worker` slice: `Transcode`.
 - Ports/adapters: `IVideoRepository`→Postgres, `IObjectStorage`→S3/MinIO, `IJobQueue`→Postgres, `IMediaProbe`→ffprobe, `ITranscoder`→ffmpeg.
-- Kafka events: none (lesson 4: `VideoUploaded`, `VideoProcessed`, `VideoFailed`).
+- Kafka events: none (lesson 6: `VideoUploaded`, `VideoProcessed`, `VideoFailed`).
 - Storage: `videos`, `transcode_jobs`; bucket `media` (`uploads/`, `videos/`).
 
 ## Threats (for security)

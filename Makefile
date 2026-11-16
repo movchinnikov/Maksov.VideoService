@@ -30,7 +30,7 @@ up: env-sync ## Bring the stack up from scratch and wait until healthy
 	$(COMPOSE) up -d --build --wait --wait-timeout 300
 	@echo ""
 	@echo "  Web:       http://localhost:3000   (user: demo, password: DEMO_PASSWORD from .env)"
-	@echo "  API:       http://localhost:8081   (gateway → videos, users, analysis, comments, friends, feed)"
+	@echo "  API:       http://localhost:8081   (gateway → videos, users, analysis, comments, friends, feed, likes; GraphQL at /graphql)"
 	@echo "  Keycloak:  http://localhost:8080   (admin — see .env)"
 	@echo "  MinIO:     http://localhost:9001"
 

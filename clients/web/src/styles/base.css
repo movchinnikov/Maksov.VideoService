@@ -898,3 +898,79 @@ a:hover {
   margin: 0;
   font-size: var(--fs-28);
 }
+
+.like {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: 32px;
+  padding: 0 var(--space-1);
+  border: 0;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+.like--on {
+  color: var(--signal);
+}
+
+.like:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+.like-surface {
+  position: relative;
+}
+
+.heart-burst {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  margin: -48px 0 0 -48px;
+  color: var(--paper);
+  pointer-events: none;
+  opacity: 0;
+  animation: heart-burst 600ms ease-out;
+}
+
+@keyframes heart-burst {
+  0% {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+  25% {
+    opacity: 1;
+    transform: scale(1.1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .heart-burst {
+    animation: none;
+    display: none;
+  }
+}
+
+.grid__likes {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  padding: var(--space-1) var(--space-2);
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.comment__like {
+  margin-left: auto;
+}
+
+.comment__meta .linklike {
+  margin-left: 0;
+}

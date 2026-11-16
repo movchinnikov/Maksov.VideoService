@@ -2,7 +2,7 @@
 # End-to-end scenario on a running stack (make up):
 # Keycloak token → create upload → PUT to MinIO → complete → wait for Ready →
 # check DASH/HLS and segments → video description (separate background job) → profile → "my videos" →
-# complete idempotency → second user: follow, feed (ids → cards), comments, recommended friends, unfollow → delete a video and the
+# complete idempotency → second user: follow, feed (ids → cards), comments, recommended friends, unfollow, likes, GraphQL, lake events → delete a video and the
 # event cascade (description, comments) → anonymous isolation and closed internal endpoints.
 # The test clip is vertical 9:16 with no SAR (like a phone), three shots and audio with a pause.
 set -euo pipefail
@@ -230,6 +230,47 @@ for i in $(seq 1 30); do
 done
 [[ "$A" == "404" ]] && ok "description removed by the video.deleted event (~${i} s)" || fail "description is still there (HTTP $A)"
 [[ "$C" == "404" ]] && ok "comments removed by the video.deleted event" || fail "comments are still there (HTTP $C)"
+
+step "Likes: separate likes service (the video becomes likeable after the video.processed event, up to 30 s)"
+CODE=000
+for i in $(seq 1 30); do
+  CODE=$(curl -s -o /dev/null -w '%{http_code}' -X PUT "${AUTH2[@]}" "$API/api/videos/$VIDEO_ID/like")
+  [[ "$CODE" == "204" ]] && break
+  sleep 1
+done
+[[ "$CODE" == "204" ]] || fail "like was not accepted (HTTP $CODE)"
+ok "$FRIEND_USER liked the clip (~${i} s)"
+[[ $(curl -s -o /dev/null -w '%{http_code}' -X PUT "${AUTH2[@]}" "$API/api/videos/$VIDEO_ID/like") == 204 ]] && ok "liking twice is idempotent (204)"
+curl -fsS "${AUTH2[@]}" "$API/api/likes/videos?ids=$VIDEO_ID" | json "[(i['count'], i['likedByMe']) for i in d['items']] == [(1, True)]" | grep -q True && ok "batch counts: 1 like, likedByMe for the liker"
+curl -fsS "${AUTH[@]}" "$API/api/likes/videos?ids=$VIDEO_ID" | json "[(i['count'], i['likedByMe']) for i in d['items']] == [(1, False)]" | grep -q True && ok "the owner sees count 1 and likedByMe=false"
+curl -fsS "${AUTH[@]}" "$API/api/videos/$VIDEO_ID/likes" | json "[i['userId'] for i in d['items']] == ['$FRIEND_ID'] and d['total'] == 1" | grep -q True && ok "likers list contains the friend"
+[[ $(curl -s -o /dev/null -w '%{http_code}' -X PUT "${AUTH2[@]}" "$API/api/videos/00000000-0000-0000-0000-000000000000/like") == 404 ]] && ok "liking an unknown video — 404"
+C2=$(curl -fsS -X POST "${AUTH2[@]}" -H 'Content-Type: application/json' "$API/api/videos/$VIDEO_ID/comments" -d '{"text":"Second take?"}' | json "d['id']")
+for i in $(seq 1 30); do
+  CODE=$(curl -s -o /dev/null -w '%{http_code}' -X PUT "${AUTH[@]}" "$API/api/videos/$VIDEO_ID/comments/$C2/like")
+  [[ "$CODE" == "204" ]] && break
+  sleep 1
+done
+[[ "$CODE" == "204" ]] && ok "the owner liked the comment (known to likes after comment.added, ~${i} s)"
+curl -fsS "${AUTH2[@]}" "$API/api/likes/comments?ids=$C2" | json "[(i['count'], i['likedByMe']) for i in d['items']] == [(1, False)]" | grep -q True && ok "comment likes: count 1, not liked by the author"
+[[ $(curl -s -o /dev/null -w '%{http_code}' -X DELETE "${AUTH[@]}" "$API/api/videos/$VIDEO_ID/comments/$C2/like") == 204 ]] && ok "unliked the comment"
+curl -fsS "${AUTH2[@]}" "$API/api/likes/comments?ids=$C2" | json "d['items'][0]['count'] == 0" | grep -q True && ok "comment like counter back to 0"
+
+step "GraphQL at the gateway: one query for video, owner, likes and comments"
+Q='{"query":"query($id: UUID!){ video(id:$id){ id title owner{ username } likes{ count likedByMe } comments(limit:5){ items{ id text author{ username } likes{ count } } } } }","variables":{"id":"'"$VIDEO_ID"'"}}'
+GQLR=$(curl -fsS -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' "$API/graphql" -d "$Q")
+echo "$GQLR" | json "d['data']['video']['owner']['username'] == '$DEMO_USER' and d['data']['video']['likes']['count'] == 1" | grep -q True && ok "video + owner + likes resolved in one request"
+echo "$GQLR" | json "[c['author']['username'] for c in d['data']['video']['comments']['items']] == ['$FRIEND_USER']" | grep -q True && ok "comment authors resolved through the users service (batched)"
+M='{"query":"mutation($id: UUID!){ likeVideo(videoId:$id){ count likedByMe } }","variables":{"id":"'"$VIDEO_ID"'"}}'
+curl -fsS -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' "$API/graphql" -d "$M" | json "d['data']['likeVideo'] == {'count': 2, 'likedByMe': True}" | grep -q True && ok "mutation likeVideo returns the fresh LikeInfo"
+[[ $(curl -s -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' "$API/graphql" -d '{"query":"{ me { id } }"}') == 401 ]] && ok "401 on /graphql without a token"
+curl -fsS -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' "$API/graphql" -d '{"query":"{ video(id:\"00000000-0000-0000-0000-000000000000\"){ id } }"}' | json "d['errors'][0]['extensions']['code'] == 'NOT_FOUND'" | grep -q True && ok "unknown video -> NOT_FOUND error code"
+
+step "Events for the data lake: like and comment events wait in the outboxes (lesson 4 delivers them)"
+pg_count() { docker exec "$(docker compose --env-file .env -f deploy/compose/docker-compose.yml ps -q postgres)" psql -U "$POSTGRES_USER" -d "$1" -tAc "$2" | tr -d ' \r'; }
+[[ "$(pg_count likes "select count(*) >= 3 from outbox where subscriber = 'lake' and sent_at is null")" == "t" ]] && ok "likes: video.liked / comment.liked / comment.unliked rows for subscriber lake are pending"
+[[ "$(pg_count comments "select count(*) >= 1 from outbox where subscriber = 'lake' and topic = 'comment.added.v1'")" == "t" ]] && ok "comments: comment.added rows for subscriber lake exist"
+[[ "$(pg_count comments "select count(*) = 0 from outbox where payload::text like '%Second take%'")" == "t" ]] && ok "the comment text is never published (textLength only)"
 
 step "No token — 401, path traversal — 404, internal endpoints are not published"
 [[ $(curl -s -o /dev/null -w '%{http_code}' "$API/api/videos/$VIDEO_ID") == 401 ]] && ok "401 without a token"

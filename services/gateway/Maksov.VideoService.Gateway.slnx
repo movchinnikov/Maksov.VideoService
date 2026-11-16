@@ -1,8 +1,10 @@
 <Solution>
   <Folder Name="/gateway/">
     <Project Path="Maksov.VideoService.Gateway/Maksov.VideoService.Gateway.csproj" />
+    <Project Path="Maksov.VideoService.Gateway.GraphQL/Maksov.VideoService.Gateway.GraphQL.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Maksov.VideoService.Gateway.GraphQL.Tests/Maksov.VideoService.Gateway.GraphQL.Tests.csproj" />
     <Project Path="tests/Maksov.VideoService.Gateway.Tests/Maksov.VideoService.Gateway.Tests.csproj" />
   </Folder>
 </Solution>

@@ -20,7 +20,7 @@
 **US-11.** As a viewer, I want to comment on a video; as an author, to delete my own comments and any comments under my video.
 **US-12.** As an author, I want to delete my video so that it disappears from the feed and profile, together with its files, description and comments.
 
-_Deferred: "Interesting videos" (recommendations) — lessons 8–9._
+_Deferred: "Interesting videos" (recommendations) — lessons 10–11._
 
 | ID | Given | When | Then |
 | --- | --- | --- | --- |
@@ -123,7 +123,7 @@ stateDiagram-v2
 | AC-transcode-01 | `FfmpegIntegrationTests.Produces_playable_dash_and_hls`, `RenditionLadderTests`, demo | green |
 | AC-transcode-02 | `FfmpegIntegrationTests`, `RenditionLadderTests.Portrait_video_is_scaled_by_short_side`, `FfprobeParserTests` | green |
 | AC-transcode-03 | `FfmpegIntegrationTests.Truncated_*`, `Text_file_*`, `MediaPolicyTests` | green |
-| AC-transcode-04 | `PostgresAdaptersTests.Expired_lease_is_reclaimed_and_stale_worker_cannot_finish`; manual chaos scenario (`docs/slo/lesson-01.md`); automated chaos test — lesson 12 | green / manual |
+| AC-transcode-04 | `PostgresAdaptersTests.Expired_lease_is_reclaimed_and_stale_worker_cannot_finish`; manual chaos scenario (`docs/slo/lesson-01.md`); automated chaos test — lesson 14 | green / manual |
 | AC-transcode-05 | `FfmpegArgsBuilderTests.Source_without_sar_gets_square_pixels_before_split`, `Source_with_sar_keeps_it`, `FfprobeParserTests.Detects_whether_source_has_sar`, `FfmpegIntegrationTests`, demo (720×1280 video without SAR) | green |
 | AC-describe-01 | `OutboxTests.Completing_a_video_writes_one_event_per_subscriber_with_contract_fields`, `Failed_video_produces_no_event`, `Claim_locks_messages_and_failure_applies_backoff_until_sent` | green |
 | AC-describe-02 | `DescriptionsApiTests.AC_analysis_05_*`, `AnalysisAdapterTests.Enqueue_is_idempotent_and_full_cycle_produces_description` (`services/analysis/tests`), demo | green |

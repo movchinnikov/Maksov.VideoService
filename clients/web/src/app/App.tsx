@@ -1,5 +1,6 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router';
 import { FeedPage } from '../features/feed/FeedPage';
+import { LikersPage } from '../features/watch/LikersPage';
 import { FollowListPage } from '../features/profile/FollowListPage';
 import { EditProfilePage } from '../features/profile/EditProfilePage';
 import { ProfilePage, ProfileRedirect } from '../features/profile/ProfilePage';
@@ -24,6 +25,7 @@ export function App() {
               <Route path="u/:id/following" element={<FollowListPage kind="following" />} />
               <Route path="profile" element={<ProfileRedirect />} />
               <Route path="profile/edit" element={<EditProfilePage />} />
+              <Route path="v/:id/likes" element={<LikersPage />} />
               <Route path="videos/:id" element={<WatchPage />} />
             </Route>
           </Route>

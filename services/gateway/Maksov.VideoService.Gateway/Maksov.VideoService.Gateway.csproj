@@ -13,6 +13,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Maksov.VideoService.Gateway.GraphQL\Maksov.VideoService.Gateway.GraphQL.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Yarp.ReverseProxy" />
     <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" />
     <PackageReference Include="OpenTelemetry.Instrumentation.Http" />

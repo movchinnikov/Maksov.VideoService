@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- GraphQL composition layer of the gateway: schema, typed downstream HTTP clients, DataLoaders, error mapping.
+       No storage and no business rules: it only shapes data owned by the services. -->
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="HotChocolate.AspNetCore" />
+  </ItemGroup>
+
+</Project>

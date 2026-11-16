@@ -86,7 +86,15 @@ public sealed record PageCursor(DateTimeOffset CreatedAt, Guid Id)
         }
 
         Span<byte> buffer = stackalloc byte[48];
-        if (!Base64Url.TryDecodeFromChars(value, buffer, out var written) || written != 24)
+        int written;
+        try
+        {
+            if (!Base64Url.TryDecodeFromChars(value, buffer, out written) || written != 24)
+            {
+                return null;
+            }
+        }
+        catch (FormatException)
         {
             return null;
         }

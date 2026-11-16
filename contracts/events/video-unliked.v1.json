@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://videoservice.local/contracts/events/video-unliked.v1.json",
+  "title": "video.unliked.v1",
+  "description": "A user removed a like from a video. Written to the likes service outbox in the same transaction as the like change, only when the state actually changes (a repeated request emits nothing). Subscriber: lake. Topic name: video.unliked.v1; partition key: videoId. Compatibility: only adding optional fields.",
+  "type": "object",
+  "required": [
+    "eventId",
+    "occurredAt",
+    "schemaVersion",
+    "videoId",
+    "ownerId",
+    "userId"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "eventId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Event ID (UUID v7); the consumer deduplicates by it."
+    },
+    "occurredAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Event time, UTC, ISO-8601."
+    },
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "traceId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "W3C trace id of the request that caused the event; null when absent."
+    },
+    "videoId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Video."
+    },
+    "ownerId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "Keycloak sub of the video owner."
+    },
+    "userId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "Keycloak sub of the user who liked/unliked."
+    }
+  },
+  "examples": [
+    {
+      "eventId": "3f0c2c1e-8a41-4b5e-9a57-2f6a1c9d7e10",
+      "occurredAt": "2026-11-17T10:00:00Z",
+      "schemaVersion": 1,
+      "traceId": null,
+      "videoId": "0b7d3a52-6c1e-4f5a-8d2b-9e4f1a2c3b4d",
+      "ownerId": "c1b2a3d4-0000-4000-8000-000000000001",
+      "userId": "c1b2a3d4-0000-4000-8000-000000000002"
+    }
+  ]
+}

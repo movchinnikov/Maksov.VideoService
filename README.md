@@ -6,9 +6,11 @@ Each lesson is a git tag `lesson-NN` with working code, tests and the lesson tex
 | Lesson | Text | State |
 | --- | --- | --- |
 | 1 | [Upload, transcoding, profiles, comments](docs/lessons/01-upload-transcode-watch.md) | tag `lesson-01`: gateway, videos, users (with follows), analysis, comments; the feed is built inside `videos` |
-| 2 | [Friends, recommended friends on pgvector, feed service](docs/lessons/02-friends-feed-pgvector.md) | follows move into the new `friends` service (PostgreSQL + pgvector), the feed becomes the stateless `feed` service returning ids, `videos` serves cards; later in lesson 2: profile polish, likes, multipart upload with resume |
+| 2 | [Friends, recommended friends on pgvector, feed service](docs/lessons/02-friends-feed-pgvector.md) | follows move into the new `friends` service (PostgreSQL + pgvector), the feed becomes the stateless `feed` service returning ids, `videos` serves cards |
+| 3 | [Likes, domain events, GraphQL](docs/lessons/03-likes-events-graphql.md) | **current**: the `likes` service (domain [Engagement](docs/domains/engagement.md)), comment and like domain events through a shared outbox (the `lake` subscriber waits as a backlog), GraphQL at the gateway |
+| 4 | Data lake ingestion *(planned)* | a `lake-ingest` service receives the events (including the `lake` backlog of likes and comments) and writes the bronze layer to MinIO as JSON Lines, idempotent by `eventId` |
 
-This README describes the **current main state**. The parts introduced in lesson 2 — the `friends` and `feed` services, pgvector and the changed feed/follow API — are marked *(lesson 2)*; the `lesson-01` tag is the state before them.
+This README describes the **current main state**. The parts introduced in lesson 3 (`likes`, comment/like events, GraphQL) are marked *(lesson 3)*. The parts introduced in lesson 2 — the `friends` and `feed` services, pgvector and the changed feed/follow API — are marked *(lesson 2)*; the `lesson-01` tag is the state before them.
 
 ## Quick start
 
@@ -17,7 +19,7 @@ A local .NET SDK is **not required**: builds and tests run in containers.
 
 ```bash
 make up      # start the stack (first run ~3–5 min: image builds); make env-sync first appends new variables to .env
-make demo    # end-to-end scenario: vertical video → Ready → description → profile → follow → feed → comments → deletion
+make demo    # end-to-end scenario: vertical video → Ready → description → profile → follow → feed → comments → likes → GraphQL → events for the lake → deletion
 make verify-auth  # sign-in and sign-up in Keycloak: login, e-mail, phone
 make pack    # NuGet packages of the shared libraries (needed to build services locally)
 make test    # all tests (.NET per solution + web)
@@ -37,26 +39,27 @@ Open http://localhost:3000, sign in as **demo** with the `DEMO_PASSWORD` from yo
 | Gateway (single API entry point) | http://localhost:8081 | Keycloak JWT |
 | Keycloak | http://localhost:8080 | admin / from `.env` |
 | MinIO Console | http://localhost:9001 | from `.env` |
-| PostgreSQL | localhost:5433 | from `.env` (databases `videos`, `users`, `analysis`, `comments`, `friends`; pgvector build of PostgreSQL 18) |
+| PostgreSQL | localhost:5433 | from `.env` (databases `videos`, `users`, `analysis`, `comments`, `friends`, `likes`; pgvector build of PostgreSQL 18) |
 | Ollama (`make up-ml` only) | http://localhost:11434 | no auth, localhost only |
 
-The `videos`, `users`, `analysis`, `comments`, `friends`, `feed` services publish no ports — only the gateway talks to them.
+The `videos`, `users`, `analysis`, `comments`, `friends`, `feed`, `likes` services publish no ports — only the gateway talks to them.
 
 ### Services
 
 | Service | Folder | Purpose | Storage | CPU / RAM limit |
 | --- | --- | --- | --- | --- |
 | `web` | `clients/web` | React, nginx | — | 0.25 / 64 MB |
-| `gateway` | `services/gateway` | YARP: JWT validation, rate limit, routing | — | 0.75 / 192 MB |
+| `gateway` | `services/gateway` | YARP: JWT validation, rate limit, routing; *(lesson 3)* `POST /graphql` (HotChocolate, project `Gateway.GraphQL`) | — | 0.75 / 256 MB |
 | `videos` | `services/videos` | upload, statuses, "my videos", DASH/HLS delivery, video cards (`GET /api/videos/cards`), profile grid, deletion, internal "ready videos by owners" query | DB `videos`: `videos`, `transcode_jobs`, `outbox` | 1.0 / 256 MB |
 | `media-worker` | `services/videos/Maksov.VideoService.Videos.MediaWorker` | CMAF transcoding, outbox delivery to subscribers (part of the videos service) | DB `videos`, MinIO | 2.0 / 1.5 GB |
 | `users` | `services/users` | profiles, people search, batch lookup by ids, internal existence check | DB `users`: `profiles` | 0.5 / 192 MB |
 | `analysis` | `services/analysis` | event intake, description API | DB `analysis`: `analyses` | 0.5 / 256 MB |
 | `analysis-worker` | `services/analysis` | ffmpeg video analysis, optional frame captioning | DB `analysis`, MinIO | 1.0 / 768 MB |
-| `comments` | `services/comments` | video comments, event intake | DB `comments`: `comments`, `known_videos` | 0.5 / 192 MB |
+| `comments` | `services/comments` | video comments, event intake; *(lesson 3)* publishes `comment.added/deleted` | DB `comments`: `comments`, `known_videos`, `outbox` | 0.5 / 192 MB |
+| `likes` *(lesson 3)* | `services/likes` | likes of videos and comments, counters, likers; event intake; publishes `video.liked/unliked`, `comment.liked/unliked` | DB `likes`: `likes`, `like_counts`, `known_videos`, `known_comments`, `outbox` | 0.5 / 192 MB |
 | `friends` *(lesson 2)* | `services/friends` | follows, stats/status, recommended friends (graph embeddings in pgvector) | DB `friends`: `follows`, `user_embeddings` (pgvector) | 0.5 / 192 MB |
 | `feed` *(lesson 2)* | `services/feed` | feed as a page of video ids (stateless) | — | 0.5 / 160 MB |
-| `*-migrator` | service images | one-off DB migrations (`videos`, `users`, `analysis`, `comments`, `friends`) | — | up to 0.5 / 256 MB |
+| `*-migrator` | service images | one-off DB migrations (`videos`, `users`, `analysis`, `comments`, `friends`, `likes`) | — | up to 0.5 / 256 MB |
 | `postgres` · `minio` · `keycloak` | `deploy/` | infrastructure (`postgres` is the pinned `pgvector/pgvector` image since lesson 2) | — | 1.0 / 512 MB · 1.0 / 512 MB · 1.5 / 1 GB |
 | `ollama` (profile `ml`) | — | local vision model | volume `ollama-data` | 4.0 / 4 GB |
 
@@ -73,6 +76,10 @@ flowchart LR
   G --> FR[friends]
   G -- GET description --> A[analysis]
   G -- comments --> C[comments]
+  G -- likes --> L[likes]
+  V -- video.processed / deleted --> L
+  C -- comment.added / deleted --> L
+  L --> PL[(likes DB)]
   F -- following-ids --> FR
   F -- ready-by-owners --> V
   FR -- profile exists --> U
@@ -108,10 +115,21 @@ flowchart LR
 | Profile *(counters and relation flags: lesson 2)* | `GET /api/users/{id}`: login, name, "about"; counters and the relation to you (`isFollowing`, `followsYou`, `isMutual`) — `GET /api/friends/{id}/stats`; follower and following lists with paging and the same flags — `GET /api/friends/{id}/followers` and `/following`; relation of many users — `GET /api/friends/status?ids=` (`following`, `followedBy`); video grid — `GET /api/users/{id}/videos`. The web app shows "Mutual" / "Follows you" badges and has the pages `/u/:id/followers` and `/u/:id/following` |
 | Recommended friends *(lesson 2)* | `GET /api/friends/recommendations`: friends of friends, ranked by cosine similarity of graph embeddings (pgvector, baseline `graph-hash-v1`), then by mutual friends |
 | Feed *(lesson 2: the `feed` service; in lesson 1 `GET /api/feed` lived in `videos` and returned cards)* | two calls: `GET /api/feed` returns a page of video ids (followed users + your own, newest first), then `GET /api/videos/cards?ids=` returns the cards in that order; follows are cached in `feed` for 20 s, when `friends` is unavailable the feed shows only your own videos |
+| Likes *(lesson 3)* | `PUT`/`DELETE /api/videos/{id}/like` and `.../comments/{commentId}/like` (idempotent, 204; a video or comment becomes likeable after the `processed` / `comment.added` event reaches `likes`, up to ~30 s); counters `GET /api/likes/videos|comments?ids=` (≤ 50 ids, `count` + `likedByMe`); likers `GET /api/videos/{id}/likes`. Web: heart under a video and a comment, double tap on the media, likers page `/v/:id/likes` |
 | Comments | `GET`/`POST /api/videos/{id}/comments`, `DELETE …/{commentId}`: the comment author or the video owner can delete; only ready videos can be commented on (the comments service learns about them from an event, up to 30 s) |
 | Deletion | `DELETE /api/videos/{id}` (owner only, 204): cleans up MinIO, description and comments (`video.deleted.v1` event) |
 | Visibility | ready videos are visible to any authenticated user; non-ready and deleted ones are not (404) |
-| "Interesting videos" | deferred until embeddings and recommendations (lessons 8–9) |
+| "Interesting videos" | deferred until embeddings and recommendations (lessons 10–11) |
+
+### GraphQL *(lesson 3)*
+
+The gateway serves `POST /graphql` (queries and mutations, no subscriptions) next to the REST routes; one request can return a video with its owner, like counters and comments. Same Keycloak token as REST; the gateway forwards it to the services. Limits: depth 8, page size ≤ 50, body ≤ 64 KiB, 300 requests per user per minute. Introspection is on only locally (`GraphQL__AllowIntrospection=true` in compose). Schema — [contracts/graphql/gateway.graphql](contracts/graphql/gateway.graphql), decision — [ADR 0012](docs/adr/0012-graphql-at-the-gateway.md).
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' http://localhost:8081/graphql -d '{
+  "query": "query($id: UUID!){ video(id:$id){ title owner{ username } likes{ count likedByMe } comments(limit:5){ items{ text author{ username } likes{ count } } } } }",
+  "variables": {"id": "<video id>"} }'
+```
 
 Decisions — [ADR 0009](docs/adr/0009-social-features-comments.md) (visibility, comments, deletion) and [ADR 0010](docs/adr/0010-friends-and-feed-services.md) (lesson 2) (friends and feed services).
 
@@ -128,9 +146,9 @@ curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8081/api/videos/<id>/
 
 The description is a set of "tool readings": scene changes, brightness, saturation, hue, motion, sound and pauses. What is actually depicted becomes known only with the vision model enabled: `make up-ml` starts a local Ollama (default model `moondream`, the first start downloads the model) and captions a few frames. The model is off by default. The same data is shown in the UI, on the video page.
 
-Decisions: [ADR 0001](docs/adr/0001-lesson-01-upload-transcode-watch.md), [0002](docs/adr/0002-cmaf-dash-and-hls.md), [0003](docs/adr/0003-keycloak-identity.md), [0004 — solution structure (partially superseded by 0008)](docs/adr/0004-solution-structure.md), [0005 — phone sign-in](docs/adr/0005-phone-login-keycloak.md), [0006 — services and gateway](docs/adr/0006-microservices-gateway-videos-users-analysis.md), [0007 — vertical video](docs/adr/0007-vertical-first.md), [0008 — separate solutions and NuGet](docs/adr/0008-separate-solutions-nuget.md), [0009 — social features and comments](docs/adr/0009-social-features-comments.md), [0010 — friends and feed services, lesson 2](docs/adr/0010-friends-and-feed-services.md).
+Decisions: [ADR 0001](docs/adr/0001-lesson-01-upload-transcode-watch.md), [0002](docs/adr/0002-cmaf-dash-and-hls.md), [0003](docs/adr/0003-keycloak-identity.md), [0004 — solution structure (partially superseded by 0008)](docs/adr/0004-solution-structure.md), [0005 — phone sign-in](docs/adr/0005-phone-login-keycloak.md), [0006 — services and gateway](docs/adr/0006-microservices-gateway-videos-users-analysis.md), [0007 — vertical video](docs/adr/0007-vertical-first.md), [0008 — separate solutions and NuGet](docs/adr/0008-separate-solutions-nuget.md), [0009 — social features and comments](docs/adr/0009-social-features-comments.md), [0010 — friends and feed services, lesson 2](docs/adr/0010-friends-and-feed-services.md), [0011 — likes service and domain events, lesson 3](docs/adr/0011-likes-service-and-domain-events.md), [0012 — GraphQL at the gateway, lesson 3](docs/adr/0012-graphql-at-the-gateway.md). The domain map is in [docs/domains](docs/domains/README.md).
 
-Contracts: [public API](contracts/openapi/api.yaml); internal APIs — [analysis](contracts/openapi/internal-analysis.yaml), [comments](contracts/openapi/internal-comments.yaml), [users](contracts/openapi/internal-users.yaml), [friends](contracts/openapi/internal-friends.yaml), [videos](contracts/openapi/internal-videos.yaml); events — [video.processed.v1](contracts/events/video-processed.v1.json), [video.deleted.v1](contracts/events/video-deleted.v1.json).
+Contracts: [public API](contracts/openapi/api.yaml); internal APIs — [analysis](contracts/openapi/internal-analysis.yaml), [comments](contracts/openapi/internal-comments.yaml), [users](contracts/openapi/internal-users.yaml), [friends](contracts/openapi/internal-friends.yaml), [videos](contracts/openapi/internal-videos.yaml), [likes](contracts/openapi/internal-likes.yaml); GraphQL — [gateway.graphql](contracts/graphql/gateway.graphql); events — [video.processed.v1](contracts/events/video-processed.v1.json), [video.deleted.v1](contracts/events/video-deleted.v1.json), [comment.added.v1](contracts/events/comment-added.v1.json), [comment.deleted.v1](contracts/events/comment-deleted.v1.json), [video.liked.v1](contracts/events/video-liked.v1.json), [video.unliked.v1](contracts/events/video-unliked.v1.json), [comment.liked.v1](contracts/events/comment-liked.v1.json), [comment.unliked.v1](contracts/events/comment-unliked.v1.json).
 
 ## Commands
 
@@ -156,20 +174,21 @@ build/                    shared MSBuild settings: Common.props/targets, Common.
 libs/                     shared libraries solution (NuGet): Primitives, BuildingBlocks (Postgres, S3, OTel, ProcessRunner, MediaKeys), Web (JWT, HTTP helpers, internal-call key), TestSupport; tests/
 artifacts/nuget/          local package feed (make pack; not in git)
 services/
-  gateway/                YARP gateway: JWT, rate limit, routes (appsettings.json) — its own solution
+  gateway/                YARP gateway: JWT, rate limit, routes (appsettings.json); Gateway.GraphQL project *(lesson 3)* — its own solution
   videos/                 video service: WebApi · Bll · Dal · Domain · Features.Videos · Features.Catalog (cards, profile grid, internal query) · MediaWorker (+ tests/)
   users/                  profiles service: WebApi · Bll · Dal · Features.Profiles (+ tests/)
   friends/                social graph and recommendations: WebApi · Bll (incl. GraphEmbedding) · Dal (pgvector) · Features.Friends (+ tests/)
+  likes/                  likes service *(lesson 3)*: WebApi · Bll · Dal · Features.Likes (+ tests/)
   feed/                   feed (video ids, stateless): WebApi · Bll · Dal (HTTP clients) · Features.Feed (+ tests/)
   analysis/               descriptions service: WebApi · Bll · Dal · Features.Descriptions · Worker with ffmpeg (+ tests/)
   comments/               comments service: WebApi · Bll · Dal · Features.Comments (+ tests/)
                           in each service folder: Maksov.VideoService.<Service>.slnx, Directory.*, global.json, nuget.config, Dockerfile
 clients/web               React + TypeScript + Vite, Shaka Player
-contracts/{openapi,events}  contracts: public and internal APIs, event schemas
+contracts/{openapi,events,graphql}  contracts: public and internal APIs, event schemas, GraphQL schema
 deploy/compose            lesson docker-compose
 deploy/postgres           init script: a database and role per service (+ `create extension vector` in `friends`)
 deploy/keycloak           realm, phone sign-in/sign-up provider (Java), theme, SSO script
-docs/                     adr, stories, design, security, slo, lessons
+docs/                     adr, domains, stories, design, security, slo, lessons
 scripts/                  demo.sh (end-to-end scenario), verify-auth.py (sign-in and sign-up)
 ```
 
@@ -197,6 +216,9 @@ Each service is a separate solution, shared code arrives as packages from the lo
 | The description did not appear (video `ready`) | 1) was the event sent? in DB `videos`: `select id, attempts, sent_at, last_error from outbox order by created_at desc limit 5;` (one row per subscriber — column `subscriber`; 401 — `INTERNAL_API_KEY` mismatch, connection refused — `analysis` is not up; without `Outbox__Subscribers__<name>__BaseUrl` addresses the dispatcher does not start). 2) accepted and processed? in DB `analysis`: `select video_id, status, attempts, last_error from analyses order by created_at desc limit 5;`. 3) `make logs s=analysis-worker`. Details — [runbook](docs/slo/lesson-01.md) |
 | Cannot comment: "video not found" | the comments service registers a video from the `video.processed.v1` event (up to 30 s after `ready`): in DB `videos` — `select subscriber, sent_at, last_error from outbox order by created_at desc limit 5;`, in DB `comments` — `select * from known_videos;`. Details — [runbook](docs/slo/lesson-01.md) |
 | The feed is empty | follows (DB `friends`: `select * from follows where follower_id = '<sub>';`), video status (only `ready` appear), follows are cached in `feed` for 20 s; when `friends` is unavailable only your own videos are returned — [runbook](docs/slo/lesson-02.md) |
+| A like returns 404 | `likes` learns about a video from `video.processed.v1` (up to ~30 s after `ready`): DB `likes` — `select * from known_videos;`, DB `videos` — `select subscriber, sent_at, last_error from outbox where subscriber = 'likes' order by created_at desc limit 5;`. [Runbook](docs/slo/lesson-03.md) |
+| Events are not delivered | unsent rows per subscriber in the producer's DB: `select subscriber, topic, count(*) from outbox where sent_at is null group by 1, 2;` — rows of `lake` wait by design until lesson 4. [Runbook](docs/slo/lesson-03.md) |
+| GraphQL returns `UNAVAILABLE`, 401 or 429 | a downstream service is down (`make ps`), the token expired, or the 300/min budget is spent; introspection works only with `GraphQL__AllowIntrospection=true` — [runbook](docs/slo/lesson-03.md) |
 | Following fails with 503 | `friends` cannot confirm the profile with `users` (`make logs s=friends`, check `users` and `INTERNAL_API_KEY`) |
 | Recommended friends are empty | the viewer follows nobody, or friends of friends are all already followed; check `user_embeddings` in DB `friends` (rows carry `model_version = graph-hash-v1`) |
 | `NU1101` / package `Maksov.VideoService.*` not found when building a service | `make pack` (the `artifacts/nuget` feed is empty or stale) |
@@ -205,7 +227,7 @@ Each service is a separate solution, shared code arrives as packages from the lo
 
 ## Resources
 
-Limits are set for every container; the total without Ollama is ≈ 11 CPU / 5.8 GB RAM (≈ 10 CPU / 5.4 GB at the `lesson-01` tag; with `make up-ml` — another 4 CPU / 4 GB). Details — [docs/slo/lesson-01.md](docs/slo/lesson-01.md) and [docs/slo/lesson-02.md](docs/slo/lesson-02.md).
+Limits are set for every container; the total without Ollama is ≈ 11.5 CPU / 6.0 GB RAM (≈ 11 CPU / 5.8 GB at the `lesson-02` tag, ≈ 10 CPU / 5.4 GB at `lesson-01`; with `make up-ml` — another 4 CPU / 4 GB). Details — [docs/slo/lesson-01.md](docs/slo/lesson-01.md) [docs/slo/lesson-02.md](docs/slo/lesson-02.md) and [docs/slo/lesson-03.md](docs/slo/lesson-03.md).
 
 ## Web development without Docker
 

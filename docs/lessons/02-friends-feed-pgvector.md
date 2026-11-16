@@ -5,7 +5,6 @@
 ## Goal
 Split the social graph out of the services of lesson 1. Follows move from `users` into a new **`friends`** service with its own database on PostgreSQL + **pgvector**; recommended friends are computed from graph embeddings; the feed leaves `videos` and becomes a stateless **`feed`** service that returns video ids, while `videos` serves cards by ids. As a bonus the graph gets follower/following lists and a "mutual" relation.
 
-The rest of lesson 2 in the series plan — profile polish, likes and multipart upload with resume — follows the same pattern and is outside this text.
 
 ## Result
 ```bash
@@ -57,7 +56,7 @@ The `friends` database stores vectors, so the shared PostgreSQL becomes the pinn
 [Friends.cs](../../services/friends/Maksov.VideoService.Friends.Features.Friends/Friends.cs) owns `PUT/DELETE /api/users/{id}/follow` (idempotent, not yourself). Before creating a follow it asks `users` whether the profile exists ([UsersProfileDirectory.cs](../../services/friends/Maksov.VideoService.Friends.Dal/Http/UsersProfileDirectory.cs); positive answers are cached for 5 minutes; if `users` is down the answer is 503 and nothing is written). The migration [0001_init.sql](../../services/friends/Maksov.VideoService.Friends.Dal/Postgres/Migrations/0001_init.sql) creates `follows` and `user_embeddings`. The internal `GET /internal/v1/friends/{userId}/following-ids` ([contract](../../contracts/openapi/internal-friends.yaml)) feeds the feed service.
 
 ### Step 4. Recommended friends: `graph-hash-v1` embeddings
-`GET /api/friends/recommendations` returns friends of your friends that you do not follow yet, ranked by the cosine similarity of **graph embeddings** and then by mutual friends. The baseline embedding ([GraphEmbedding.cs](../../services/friends/Maksov.VideoService.Friends.Bll/GraphEmbedding.cs)) is deterministic and needs no ML model: every user has a stable pseudo-random 32-dimensional vector `h(user)` derived from a hash, and the user's embedding is `normalize(h(user) + 0.5 · Σ h(followed))` — people who follow the same accounts get similar vectors. The embedding is recomputed for the follower on every follow/unfollow. Vectors live in a `vector(32)` column next to a `model_version`, with an HNSW index (`vector_cosine_ops`). The idea: the same table and query keep working when a real model replaces the baseline in lessons 8–9 — a new `model_version`, recomputed in the background, no downtime.
+`GET /api/friends/recommendations` returns friends of your friends that you do not follow yet, ranked by the cosine similarity of **graph embeddings** and then by mutual friends. The baseline embedding ([GraphEmbedding.cs](../../services/friends/Maksov.VideoService.Friends.Bll/GraphEmbedding.cs)) is deterministic and needs no ML model: every user has a stable pseudo-random 32-dimensional vector `h(user)` derived from a hash, and the user's embedding is `normalize(h(user) + 0.5 · Σ h(followed))` — people who follow the same accounts get similar vectors. The embedding is recomputed for the follower on every follow/unfollow. Vectors live in a `vector(32)` column next to a `model_version`, with an HNSW index (`vector_cosine_ops`). The idea: the same table and query keep working when a real model replaces the baseline in lessons 10–11 — a new `model_version`, recomputed in the background, no downtime.
 
 ### Step 5. Mutual status and follower/following lists
 `GET /api/friends/{id}/stats` returns counters plus the relation to the viewer: `isFollowing`, `followsYou`, `isMutual` (**mutual = both follow each other**). `GET /api/friends/status?ids=` answers for up to 50 users with `following` and `followedBy`. `GET /api/friends/{id}/followers` and `/following` return paged lists (newest first, keyset cursor, limit ≤ 50, default 20) with `total` and the same flags relative to the viewer. The web app renders them on [FollowListPage](../../clients/web/src/features/profile/FollowListPage.tsx) (`/u/:id/followers`, `/u/:id/following`) with "Mutual" / "Follows you" badges.
@@ -88,7 +87,7 @@ Tests: `services/friends/tests` (`AC_friends_01..10`, `FriendsAdapterTests` on a
 | Recommendations are empty | the viewer follows nobody, or all friends of friends are already followed | check `follows` and `user_embeddings` (`model_version = graph-hash-v1`) |
 
 ## Self-check exercises
-1. Why was the feed moved out of `videos`? Which dependency disappeared, and what does it unlock for fan-out (lesson 5) and ranking (lesson 9)?
+1. Why was the feed moved out of `videos`? Which dependency disappeared, and what does it unlock for fan-out (lesson 7) and ranking (lesson 11)?
 2. A feed page costs the client two calls. What is the benefit of returning ids only, and when would you merge the calls?
 3. Stop `friends` and open the feed: why is the response 200 and not 5xx? How long until follows return after `friends` starts, and why? What happens if `videos` is stopped instead?
 4. Open `user_embeddings`: why are vectors stored with `model_version`, and how would you roll out a better model without downtime?
@@ -97,4 +96,4 @@ Tests: `services/friends/tests` (`AC_friends_01..10`, `FriendsAdapterTests` on a
 7. ★ Make `isMutual` available in the feed cards. Which service should own the data, and what would the extra call cost?
 
 ## What's next
-The rest of lesson 2 in the series plan: profile polish, likes and multipart upload with resume. Lesson 4 replaces the outbox transport with Kafka; lesson 5 moves the feed to hot storage with fan-out; lessons 8–9 replace the `graph-hash-v1` baseline with real embeddings and ranking.
+Next: [lesson 3](03-likes-events-graphql.md) adds likes, domain events and GraphQL; lesson 4 builds the data lake ingestion; lesson 6 replaces the outbox transport with Kafka; lesson 7 moves the feed to hot storage with fan-out; lessons 10–11 replace the `graph-hash-v1` baseline with real embeddings and ranking.

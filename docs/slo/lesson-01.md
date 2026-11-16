@@ -17,7 +17,7 @@
 | analysis | description appears after `ready` (video ≤ 1 min) | p95 < 30 s on a local machine |
 | analysis | share of `ready` videos that reach `done` | 99 % (an analysis failure does not affect the video) |
 
-Metrics: ASP.NET Core (`http.server.request.duration`) in every service, the transcoding worker (`transcode.jobs{outcome}`, `transcode.duration`). Export is enabled by `OTEL_EXPORTER_OTLP_ENDPOINT` (collector and dashboards — lesson 12).
+Metrics: ASP.NET Core (`http.server.request.duration`) in every service, the transcoding worker (`transcode.jobs{outcome}`, `transcode.duration`). Export is enabled by `OTEL_EXPORTER_OTLP_ENDPOINT` (collector and dashboards — lesson 14).
 
 ## Resource budget (compose limits)
 | Container | CPU | RAM |

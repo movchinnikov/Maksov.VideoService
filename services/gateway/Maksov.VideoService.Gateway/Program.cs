@@ -2,6 +2,7 @@ using System.Text.Json.Serialization;
 using System.Threading.RateLimiting;
 using Maksov.VideoService.BuildingBlocks.Observability;
 using Maksov.VideoService.Gateway;
+using Maksov.VideoService.Gateway.GraphQL;
 using Maksov.VideoService.Web;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using OpenTelemetry.Metrics;
@@ -35,14 +36,21 @@ builder.Services.AddRateLimiter(static o =>
     o.AddPolicy("create-upload", http => RateLimitPartition.GetFixedWindowLimiter(
         http.User.FindFirst("sub")?.Value ?? "anonymous",
         static _ => new FixedWindowRateLimiterOptions { PermitLimit = 20, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
+
+    // GraphQL: one request can fan out to several services, so the budget is per user and per minute.
+    o.AddPolicy("graphql", http => RateLimitPartition.GetFixedWindowLimiter(
+        http.User.FindFirst("sub")?.Value ?? "anonymous",
+        static _ => new FixedWindowRateLimiterOptions { PermitLimit = 300, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
 });
 
+builder.Services.AddGatewayGraphQL();
 builder.Services.AddHealthChecks();
 builder.Services.AddReverseProxy().LoadFromConfig(builder.Configuration.GetSection("ReverseProxy"));
 
 var app = builder.Build();
 
 app.UseExceptionHandler();
+app.UseGraphQLRequestLimits();
 app.UseAuthentication();
 app.UseAuthorization();
 app.UseRateLimiter();
@@ -57,6 +65,9 @@ app.MapGet("/", () => TypedResults.Ok(new GatewayInfo(
     "This is the API gateway. The web client is at the address in the web field; API methods are under /api and require a Keycloak token.",
     webUrl,
     "/health/ready")));
+
+// GraphQL composition layer (ADR 0012): POST /graphql, authenticated and rate limited. YARP routes only match /api/**.
+app.MapGatewayGraphQL("authenticated", "graphql");
 
 // Everything under /api goes to services per the route table (appsettings: ReverseProxy). /internal/** is not published.
 app.MapReverseProxy();

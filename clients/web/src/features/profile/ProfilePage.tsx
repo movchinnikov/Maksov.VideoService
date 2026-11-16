@@ -9,6 +9,8 @@ import { mergeFirstPage, mergePages } from '../../shared/lib/pages';
 import { thumbLabel } from '../../shared/lib/social';
 import { followersPath, followingPath, profilePath, videoPath } from '../../shared/lib/urls';
 import { usePolling } from '../../shared/lib/usePolling';
+import { formatCount } from '../../shared/lib/likes';
+import { useLikes } from '../../shared/lib/useLikes';
 import { Avatar } from '../../shared/ui/Avatar';
 import { FollowButton } from '../../shared/ui/FollowButton';
 import { RelationBadge } from '../../shared/ui/RelationBadge';
@@ -79,6 +81,10 @@ function ProfileBody({ id, user, stats }: { id: string; user: UserCard | Profile
   const [next, setNext] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [more, setMore] = useState(false);
+  const { likes, load: loadLikes } = useLikes(
+    (ids) => api.getVideoLikeInfo(ids),
+    (vid, on) => api.setVideoLike(vid, on),
+  );
 
   const fetchPage = useCallback(
     (cursor?: string, signal?: AbortSignal) =>
@@ -94,6 +100,7 @@ function ProfileBody({ id, user, stats }: { id: string; user: UserCard | Profile
     fetchPage(undefined, controller.signal).then(
       (p) => {
         setTiles(p.tiles);
+        loadLikes(p.tiles.filter((t) => t.status === 'ready').map((t) => t.id));
         setNext(p.next);
       },
       (e: unknown) => {
@@ -101,7 +108,7 @@ function ProfileBody({ id, user, stats }: { id: string; user: UserCard | Profile
       },
     );
     return () => controller.abort();
-  }, [fetchPage, me]);
+  }, [fetchPage, me, loadLikes]);
 
   const working = own && !!tiles?.some((t) => isInProgress(t.status));
   usePolling(async (signal) => {
@@ -116,6 +123,7 @@ function ProfileBody({ id, user, stats }: { id: string; user: UserCard | Profile
     fetchPage(next).then(
       (p) => {
         setTiles((prev) => mergePages(prev ?? [], p.tiles));
+        loadLikes(p.tiles.filter((t) => t.status === 'ready').map((t) => t.id));
         setNext(p.next);
         setMore(false);
       },
@@ -198,6 +206,11 @@ function ProfileBody({ id, user, stats }: { id: string; user: UserCard | Profile
                 <Link to={videoPath(t.id)} className="grid__cell" aria-label={t.title}>
                   <Poster className="grid__img" path={t.poster} alt="" />
                   {label && <span className="grid__label data">{label}</span>}
+                  {!label && (likes[t.id]?.count ?? 0) > 0 && (
+                    <span className="grid__likes data" aria-label={`${likes[t.id]?.count ?? 0} likes`}>
+                      {formatCount(likes[t.id]?.count ?? 0)}
+                    </span>
+                  )}
                 </Link>
               </li>
             );

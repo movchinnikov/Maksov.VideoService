@@ -1,0 +1,150 @@
+openapi: 3.1.0
+info:
+  title: VideoService Likes (internal)
+  version: 0.1.0
+  description: |
+    Internal API of the likes service (receives `video.processed.v1`, `video.deleted.v1`, `comment.added.v1`, `comment.deleted.v1` events).
+    Reachable only by other services inside the compose network (`http://likes:8080`), protected by the `X-Internal-Key` header
+    (`INTERNAL_API_KEY` variable). Not published through the gateway: an external `/internal/**` request gets 404.
+    Public routes (`PUT/DELETE /api/videos/{videoId}/like`, `PUT/DELETE /api/videos/{videoId}/comments/{commentId}/like`,
+    `GET /api/likes/videos|comments?ids=`, `GET /api/videos/{videoId}/likes`) are described in `api.yaml`.
+    The service publishes `video.liked.v1`, `video.unliked.v1`, `comment.liked.v1`, `comment.unliked.v1` to the subscriber `lake` through its outbox.
+servers:
+  - url: http://likes:8080
+security:
+  - internalKey: []
+tags:
+  - name: Internal
+paths:
+  /internal/v1/events/video-processed:
+    post:
+      tags: [Internal]
+      operationId: AcceptVideoProcessed
+      summary: Register a video (known_videos replica)
+      description: |
+        Sent by the producer's outbox dispatcher (subscriber `likes`, address `Outbox__Subscribers__likes__BaseUrl`); retried with backoff.
+        Idempotent by `videoId`. A late event does not resurrect a deleted video (tombstone). Validation: `schemaVersion` = 1; `eventId` and `videoId` non-empty; `ownerId` required (up to 128 characters).
+        Body schema: `contracts/events/video-processed.v1.json` (extra fields are ignored).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '../events/video-processed.v1.json'
+      responses:
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Accepted' }
+        '400':
+          description: Event failed validation
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+        '401':
+          description: Missing or invalid `X-Internal-Key`
+  /internal/v1/events/video-deleted:
+    post:
+      tags: [Internal]
+      operationId: AcceptVideoDeleted
+      summary: Forget a video and cascade-delete its likes
+      description: |
+        Sent by the producer's outbox dispatcher (subscriber `likes`, address `Outbox__Subscribers__likes__BaseUrl`); retried with backoff.
+        Removes likes of the video and of its comments and all their counters, then keeps the video as a tombstone. Idempotent; an event for an unknown video returns 202. No per-like events are emitted for the cascade. Validation: `schemaVersion` = 1; `eventId` and `videoId` non-empty.
+        Body schema: `contracts/events/video-deleted.v1.json` (extra fields are ignored).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '../events/video-deleted.v1.json'
+      responses:
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Accepted' }
+        '400':
+          description: Event failed validation
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+        '401':
+          description: Missing or invalid `X-Internal-Key`
+  /internal/v1/events/comment-added:
+    post:
+      tags: [Internal]
+      operationId: AcceptCommentAdded
+      summary: Register a comment (known_comments replica)
+      description: |
+        Sent by the producer's outbox dispatcher (subscriber `likes`, address `Outbox__Subscribers__likes__BaseUrl`); retried with backoff.
+        Idempotent by `commentId`. Ignored when the comment or its video is already deleted (tombstones). The comment text is never part of the event. Validation: `schemaVersion` = 1; `eventId`, `commentId`, `videoId` non-empty; `authorId` required (up to 128 characters).
+        Body schema: `contracts/events/comment-added.v1.json` (extra fields are ignored).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '../events/comment-added.v1.json'
+      responses:
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Accepted' }
+        '400':
+          description: Event failed validation
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+        '401':
+          description: Missing or invalid `X-Internal-Key`
+  /internal/v1/events/comment-deleted:
+    post:
+      tags: [Internal]
+      operationId: AcceptCommentDeleted
+      summary: Forget a comment and delete its likes
+      description: |
+        Sent by the producer's outbox dispatcher (subscriber `likes`, address `Outbox__Subscribers__likes__BaseUrl`); retried with backoff.
+        Removes likes and the counter of the comment and leaves a tombstone so a late `comment.added.v1` does not resurrect it. Idempotent. Validation: `schemaVersion` = 1; `eventId`, `commentId`, `videoId` non-empty.
+        Body schema: `contracts/events/comment-deleted.v1.json` (extra fields are ignored).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '../events/comment-deleted.v1.json'
+      responses:
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Accepted' }
+        '400':
+          description: Event failed validation
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+        '401':
+          description: Missing or invalid `X-Internal-Key`
+components:
+  securitySchemes:
+    internalKey:
+      type: apiKey
+      in: header
+      name: X-Internal-Key
+  schemas:
+    Accepted:
+      type: object
+      required: [ok]
+      properties:
+        ok: { type: boolean }
+    ProblemDetails:
+      type: object
+      properties:
+        type: { type: string }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        errors: { type: object, additionalProperties: { type: array, items: { type: string } } }

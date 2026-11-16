@@ -43,3 +43,9 @@ The product is built around vertical 9:16 videos.
 - Description — no chips, gradients, or emoji: tags are just a line separated by " · ".
 
 Tokens — [clients/web/src/styles/tokens.css](../../clients/web/src/styles/tokens.css).
+
+## Likes
+- A like is a flat heart glyph plus a count in the data face; liked state uses `--signal` and `aria-pressed`. No bursts of confetti, no counters animating.
+- Double click or double tap on the media likes (never unlikes) and shows a single 600 ms heart; with `prefers-reduced-motion` the heart is not shown.
+- Updates are optimistic and roll back on error. Like info is loaded with one batch call per page (feed page, comments page, profile grid); the profile grid shows the count only.
+- The count on the watch page links to `/v/:id/likes`: people with Mutual / Follows you badges, cursor paging with "Load more".

@@ -1,5 +1,6 @@
 using System.Text.Json.Serialization;
 using Maksov.VideoService.BuildingBlocks.Observability;
+using Maksov.VideoService.BuildingBlocks.Outbox;
 using Maksov.VideoService.BuildingBlocks.Postgres;
 using Maksov.VideoService.Comments.Dal;
 using Maksov.VideoService.Comments.Features.Comments;
@@ -27,6 +28,7 @@ builder.Services.ConfigureHttpJsonOptions(static o => o.SerializerOptions.TypeIn
 builder.Services.AddProblemDetails();
 builder.Services.AddPostgres(builder.Configuration, "videoservice-comments");
 builder.Services.AddSingleton<SqlMigrator>();
+builder.Services.AddOutbox(builder.Configuration, EventPaths.Default);
 builder.Services.AddDal();
 builder.AddKeycloakJwtAuthentication();
 builder.Services.AddInternalApiKey(builder.Configuration);

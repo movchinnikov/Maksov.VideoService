@@ -6,7 +6,10 @@ import type { Comment } from '../../shared/api/types';
 import { mergePages } from '../../shared/lib/pages';
 import { relativeTime } from '../../shared/lib/relativeTime';
 import { checkComment, COMMENT_MAX } from '../../shared/lib/social';
+import { emptyLike } from '../../shared/lib/likes';
 import { profilePath } from '../../shared/lib/urls';
+import { useLikes } from '../../shared/lib/useLikes';
+import { LikeButton } from '../../shared/ui/LikeButton';
 
 export function Comments({ videoId }: { videoId: string }) {
   const [items, setItems] = useState<Comment[] | null>(null);
@@ -17,12 +20,17 @@ export function Comments({ videoId }: { videoId: string }) {
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [more, setMore] = useState(false);
+  const { likes, load: loadLikes, toggle: toggleLike } = useLikes(
+    (ids) => api.getCommentLikeInfo(ids),
+    (commentId, on) => api.setCommentLike(videoId, commentId, on),
+  );
 
   useEffect(() => {
     const controller = new AbortController();
     api.getComments(videoId, undefined, controller.signal).then(
       (p) => {
         setItems(p.items);
+        loadLikes(p.items.map((c) => c.id));
         setNext(p.nextCursor);
         setTotal(p.total);
       },
@@ -31,7 +39,7 @@ export function Comments({ videoId }: { videoId: string }) {
       },
     );
     return () => controller.abort();
-  }, [videoId]);
+  }, [videoId, loadLikes]);
 
   const check = checkComment(text);
 
@@ -74,6 +82,7 @@ export function Comments({ videoId }: { videoId: string }) {
     api.getComments(videoId, next).then(
       (p) => {
         setItems((prev) => mergePages(prev ?? [], p.items));
+        loadLikes(p.items.map((c) => c.id));
         setNext(p.nextCursor);
         setTotal(p.total);
         setMore(false);
@@ -127,6 +136,14 @@ export function Comments({ videoId }: { videoId: string }) {
                   <b>{c.authorUsername}</b>
                 </Link>{' '}
                 <span className="muted">{relativeTime(c.createdAt)}</span>
+                <span className="comment__like">
+                  <LikeButton
+                    count={(likes[c.id] ?? emptyLike(c.id)).count}
+                    liked={likes[c.id]?.likedByMe ?? false}
+                    onToggle={() => toggleLike(c.id)}
+                    label={likes[c.id]?.likedByMe ? 'Unlike comment' : 'Like comment'}
+                  />
+                </span>
                 {c.canDelete && (
                   <button type="button" className="linklike" onClick={() => void remove(c)}>
                     Delete

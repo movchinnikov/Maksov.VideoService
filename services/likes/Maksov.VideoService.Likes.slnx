@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/likes/">
+    <Project Path="Maksov.VideoService.Likes.Bll/Maksov.VideoService.Likes.Bll.csproj" />
+    <Project Path="Maksov.VideoService.Likes.Dal/Maksov.VideoService.Likes.Dal.csproj" />
+    <Project Path="Maksov.VideoService.Likes.Features.Likes/Maksov.VideoService.Likes.Features.Likes.csproj" />
+    <Project Path="Maksov.VideoService.Likes.WebApi/Maksov.VideoService.Likes.WebApi.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Maksov.VideoService.Likes.Tests/Maksov.VideoService.Likes.Tests.csproj" />
+  </Folder>
+</Solution>

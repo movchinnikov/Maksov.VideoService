@@ -52,7 +52,7 @@ Key ideas:
 1. File bytes **do not go through the API** — the browser puts them into MinIO via a presigned URL.
 2. A single entry point — the **gateway** (YARP): JWT validation, rate limit, routing. Services behind it validate the JWT again.
 3. Job enqueueing and the event happen **in the same transaction** as the status change (no dual write).
-4. The queue is **Postgres** (`SKIP LOCKED` + lease + `LISTEN/NOTIFY`) behind a port; in lesson 4 we swap it for Kafka.
+4. The queue is **Postgres** (`SKIP LOCKED` + lease + `LISTEN/NOTIFY`) behind a port; in lesson 6 we swap it for Kafka.
 5. We encode **once** into CMAF and serve **DASH and HLS** ([ADR 0002](../adr/0002-cmaf-dash-and-hls.md)).
 6. **A database per service**; services communicate through the outbox (a row per subscriber) and internal HTTP, not through shared tables.
 7. **Separate solutions:** each service has its own solution, shared libraries arrive as NuGet packages (`make pack`).
@@ -153,4 +153,4 @@ Optional — frame captioning by a vision model: `make up-ml`.
 7. ★ Replace segment delivery through the API with nginx `auth_request`: what do we gain and what gets more complicated?
 
 ## What's next
-Lesson 4 will replace the outbox → subscribers transport from HTTP with Kafka (the `outbox` table stays). "Interesting videos" will appear after embeddings (lessons 8–9). Lesson 2: profiles, posts, likes and resumable multipart upload.
+Lesson 6 will replace the outbox → subscribers transport from HTTP with Kafka (the `outbox` table stays). "Interesting videos" will appear after embeddings (lessons 10–11). Lesson 2: profiles, posts, likes and resumable multipart upload.

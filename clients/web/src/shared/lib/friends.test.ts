@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildFollowRows, joinRecommendations, mutualLabel, relationBadge, withFollowing } from './friends';
+import { buildFollowRows, buildLikerRows, joinRecommendations, mutualLabel, relationBadge, withFollowing } from './friends';
 
 const u = (id: string) => ({ id, username: id, displayName: id, bio: '' });
 
@@ -47,5 +47,13 @@ describe('relationBadge and follow rows', () => {
     );
     expect(rows[0]).toMatchObject({ id: 'a', username: 'a', isFollowing: true });
     expect(rows[1]).toMatchObject({ id: 'z', username: 'z', displayName: '', followsYou: true });
+  });
+});
+
+describe('buildLikerRows', () => {
+  it('joins profiles and relation flags', () => {
+    const rows = buildLikerRows([{ userId: 'a' }, { userId: 'z' }], [u('a')], ['a'], ['a', 'z']);
+    expect(rows[0]).toMatchObject({ id: 'a', username: 'a', isFollowing: true, followsYou: true });
+    expect(rows[1]).toMatchObject({ id: 'z', username: 'z', isFollowing: false, followsYou: true });
   });
 });

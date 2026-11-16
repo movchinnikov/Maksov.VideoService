@@ -1,4 +1,4 @@
-# Lesson 2: web → gateway → services videos / users / analysis / comments / friends / feed (+ workers), Keycloak, MinIO, Postgres.
+# Lesson 3: web → gateway → services videos / users / analysis / comments / friends / feed / likes (+ workers), Keycloak, MinIO, Postgres.
 # Run: make up (from the repository root). All resource limits and healthchecks are explicit.
 name: videoservice
 
@@ -28,6 +28,7 @@ services:
       ANALYSIS_DB_PASSWORD: ${ANALYSIS_DB_PASSWORD}
       COMMENTS_DB_PASSWORD: ${COMMENTS_DB_PASSWORD}
       FRIENDS_DB_PASSWORD: ${FRIENDS_DB_PASSWORD}
+      LIKES_DB_PASSWORD: ${LIKES_DB_PASSWORD}
     command: ["postgres", "-c", "shared_buffers=128MB", "-c", "max_connections=100"]
     ports: ["127.0.0.1:5433:5432"]
     volumes:
@@ -142,6 +143,7 @@ services:
       # Delivery of "video processed/deleted" events to subscribers (outbox → HTTP; in lesson 4 — Kafka).
       Outbox__Subscribers__analysis__BaseUrl: http://analysis:8080
       Outbox__Subscribers__comments__BaseUrl: http://comments:8080
+      Outbox__Subscribers__likes__BaseUrl: http://likes:8080
       Internal__ApiKey: ${INTERNAL_API_KEY}
     depends_on:
       videos-migrator: { condition: service_completed_successfully }
@@ -207,9 +209,44 @@ services:
       <<: *auth-env
       ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=comments;Username=comments;Password=${COMMENTS_DB_PASSWORD}
       Internal__ApiKey: ${INTERNAL_API_KEY}
+      # comment.added/deleted -> likes (replica of comments); the `lake` subscriber (lesson 4) stays a backlog until configured.
+      Outbox__Subscribers__likes__BaseUrl: http://likes:8080
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     depends_on:
       comments-migrator: { condition: service_completed_successfully }
+      keycloak: { condition: service_healthy }
+    read_only: true
+    tmpfs: [/tmp:size=16m]
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 192M }
+
+  # ---------------- likes: likes of videos and comments (domain Engagement) ----------------
+  likes-migrator:
+    build: { context: ../.., dockerfile: services/likes/Dockerfile }
+    image: videoservice/likes:local
+    command: ["--migrate"]
+    environment:
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=likes;Username=likes;Password=${LIKES_DB_PASSWORD}
+    depends_on:
+      postgres: { condition: service_healthy }
+    healthcheck:
+      disable: true
+    restart: "no"
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 192M }
+
+  likes:
+    image: videoservice/likes:local
+    environment:
+      <<: *auth-env
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=likes;Username=likes;Password=${LIKES_DB_PASSWORD}
+      Internal__ApiKey: ${INTERNAL_API_KEY}
+      # like.* events go to the data lake subscriber `lake` (lesson 4): rows wait in the outbox until it is configured.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+    depends_on:
+      likes-migrator: { condition: service_completed_successfully }
       keycloak: { condition: service_healthy }
     read_only: true
     tmpfs: [/tmp:size=16m]
@@ -343,6 +380,8 @@ services:
     image: videoservice/gateway:local
     environment:
       <<: *auth-env
+      # Local stack only: lets you explore the schema at /graphql (off by default).
+      GraphQL__AllowIntrospection: "true"
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     ports: ["127.0.0.1:8081:8080"]
     depends_on:
@@ -352,12 +391,13 @@ services:
       comments: { condition: service_healthy }
       friends: { condition: service_healthy }
       feed: { condition: service_healthy }
+      likes: { condition: service_healthy }
       keycloak: { condition: service_healthy }
     read_only: true
     tmpfs: [/tmp:size=16m]
     deploy:
       resources:
-        limits: { cpus: "0.75", memory: 192M }
+        limits: { cpus: "0.75", memory: 256M }
 
   web:
     build: { context: ../../clients/web }

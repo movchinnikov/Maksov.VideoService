@@ -6,9 +6,13 @@ import { useMe } from '../../shared/lib/data';
 import { describeState, formatTags, isVertical, shouldPollDescription } from '../../shared/lib/description';
 import { failureMessage, fileSize, isInProgress, resolution, timecode } from '../../shared/lib/format';
 import { relativeTime } from '../../shared/lib/relativeTime';
-import { profilePath } from '../../shared/lib/urls';
+import { emptyLike, formatCount } from '../../shared/lib/likes';
+import { likersPath, profilePath } from '../../shared/lib/urls';
+import { useLikes } from '../../shared/lib/useLikes';
 import { usePolling } from '../../shared/lib/usePolling';
 import { Avatar } from '../../shared/ui/Avatar';
+import { LikeButton } from '../../shared/ui/LikeButton';
+import { LikeSurface } from '../../shared/ui/LikeSurface';
 import { StatusMark } from '../../shared/ui/StatusMark';
 import { Comments } from '../comments/Comments';
 import { Player } from './Player';
@@ -23,6 +27,10 @@ export function WatchPage() {
   const [confirming, setConfirming] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const { likes, load: loadLikes, set: setLike, toggle: toggleLike } = useLikes(
+    (ids) => api.getVideoLikeInfo(ids),
+    (vid, on) => api.setVideoLike(vid, on),
+  );
 
   const load = useCallback(
     (signal?: AbortSignal) =>
@@ -76,6 +84,10 @@ export function WatchPage() {
     return true;
   }, pollDescription && video?.status === 'ready');
 
+  useEffect(() => {
+    if (video?.status === 'ready') loadLikes([id]);
+  }, [video?.status, id, loadLikes]);
+
   const remove = async () => {
     setDeleting(true);
     setDeleteError(null);
@@ -121,6 +133,7 @@ export function WatchPage() {
         </span>
       </div>
 
+      <LikeSurface onDoubleLike={() => video.status === 'ready' && setLike(video.id, true)}>
       {video.status === 'ready' && video.playback ? (
         <Player playback={video.playback} renditions={video.renditions ?? []} title={video.title} horizontal={!vertical} />
       ) : (
@@ -132,6 +145,22 @@ export function WatchPage() {
                 ? 'The file has not been uploaded yet.'
                 : 'Processing: cutting qualities and segments. The page will update on its own.'}
           </p>
+        </div>
+      )}
+
+      </LikeSurface>
+
+      {video.status === 'ready' && (
+        <div className="post__actions data">
+          <LikeButton
+            count={(likes[video.id] ?? emptyLike(video.id)).count}
+            liked={likes[video.id]?.likedByMe ?? false}
+            onToggle={() => toggleLike(video.id)}
+            label={likes[video.id]?.likedByMe ? 'Unlike' : 'Like'}
+          />
+          <Link to={likersPath(video.id)}>
+            {formatCount(likes[video.id]?.count ?? 0)} {(likes[video.id]?.count ?? 0) === 1 ? 'like' : 'likes'}
+          </Link>
         </div>
       )}
 

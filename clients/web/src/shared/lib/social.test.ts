@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { mergeFirstPage, mergePages } from './pages';
 import { relativeTime } from './relativeTime';
 import { checkComment, COMMENT_MAX, initial, memoPromise, normalizeQuery, thumbLabel } from './social';
-import { commentsPath, followersPath, followingPath, isOwnProfilePath, profilePath, videoPath } from './urls';
+import { commentsPath, followersPath, followingPath, likersPath, isOwnProfilePath, profilePath, videoPath } from './urls';
 
 const now = Date.parse('2026-01-01T12:00:00Z');
 const ago = (s: number) => new Date(now - s * 1000).toISOString();
@@ -80,4 +80,8 @@ describe('follow list paths', () => {
     expect(followersPath('a')).toBe('/u/a/followers');
     expect(followingPath('a')).toBe('/u/a/following');
   });
+});
+
+describe('likers path', () => {
+  it('builds path', () => expect(likersPath('v1')).toBe('/v/v1/likes'));
 });

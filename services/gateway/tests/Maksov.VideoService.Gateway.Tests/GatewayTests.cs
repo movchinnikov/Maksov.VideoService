@@ -65,6 +65,7 @@ public sealed class GatewayFactory : WebApplicationFactory<Program>, IAsyncLifet
     public StubService Comments { get; private set; } = null!;
     public StubService Friends { get; private set; } = null!;
     public StubService Feed { get; private set; } = null!;
+    public StubService Likes { get; private set; } = null!;
 
     public async ValueTask InitializeAsync()
     {
@@ -74,6 +75,7 @@ public sealed class GatewayFactory : WebApplicationFactory<Program>, IAsyncLifet
         Comments = await StubService.StartAsync("comments");
         Friends = await StubService.StartAsync("friends");
         Feed = await StubService.StartAsync("feed");
+        Likes = await StubService.StartAsync("likes");
     }
 
     public override async ValueTask DisposeAsync()
@@ -84,6 +86,7 @@ public sealed class GatewayFactory : WebApplicationFactory<Program>, IAsyncLifet
         await Comments.DisposeAsync();
         await Friends.DisposeAsync();
         await Feed.DisposeAsync();
+        await Likes.DisposeAsync();
         await base.DisposeAsync();
     }
 
@@ -97,6 +100,7 @@ public sealed class GatewayFactory : WebApplicationFactory<Program>, IAsyncLifet
             ["ReverseProxy:Clusters:comments:Destinations:d1:Address"] = Comments.Address,
             ["ReverseProxy:Clusters:friends:Destinations:d1:Address"] = Friends.Address,
             ["ReverseProxy:Clusters:feed:Destinations:d1:Address"] = Feed.Address,
+            ["ReverseProxy:Clusters:likes:Destinations:d1:Address"] = Likes.Address,
         }));
         builder.ConfigureServices(services => services.AddTestAuthentication());
     }
@@ -120,6 +124,8 @@ public sealed class GatewayTests : IClassFixture<GatewayFactory>
     [InlineData("GET", "/api/videos/0190f5b4-0000-7000-8000-000000000001/description")]
     [InlineData("GET", "/api/users/me")]
     [InlineData("GET", "/api/feed")]
+    [InlineData("PUT", "/api/videos/0190f5b4-0000-7000-8000-000000000001/like")]
+    [InlineData("GET", "/api/likes/videos")]
     [InlineData("PUT", "/api/users/u1/follow")]
     [InlineData("GET", "/api/friends/recommendations")]
     [InlineData("GET", "/api/users/u1/videos")]
@@ -146,6 +152,12 @@ public sealed class GatewayTests : IClassFixture<GatewayFactory>
     [InlineData("GET", "/api/users/u1", "users")]
     [InlineData("GET", "/api/users", "users")]
     [InlineData("GET", "/api/feed", "feed")]
+    [InlineData("PUT", "/api/videos/0190f5b4-0000-7000-8000-000000000001/like", "likes")]
+    [InlineData("DELETE", "/api/videos/0190f5b4-0000-7000-8000-000000000001/like", "likes")]
+    [InlineData("GET", "/api/videos/0190f5b4-0000-7000-8000-000000000001/likes", "likes")]
+    [InlineData("PUT", "/api/videos/0190f5b4-0000-7000-8000-000000000001/comments/0190f5b4-0000-7000-8000-000000000002/like", "likes")]
+    [InlineData("GET", "/api/likes/videos", "likes")]
+    [InlineData("GET", "/api/likes/comments", "likes")]
     [InlineData("PUT", "/api/users/u1/follow", "friends")]
     [InlineData("DELETE", "/api/users/u1/follow", "friends")]
     [InlineData("GET", "/api/friends/u1/stats", "friends")]

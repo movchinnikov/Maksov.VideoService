@@ -44,7 +44,7 @@ flowchart LR
 | Option | Why rejected |
 | --- | --- |
 | Monolith with modules (one process, schemas in one DB) | Heavy analysis shares the process and memory limits with the API; boundaries for Kafka and the feed would have to be carved out later; modules easily grow together through a shared DB |
-| Kafka right away | Lesson 1 must start quickly on a modest machine; the broker and Schema Registry are the topic of lesson 4. The outbox makes the transition a transport swap rather than a rewrite |
+| Kafka right away | Lesson 1 must start quickly on a modest machine; the broker and Schema Registry are the topic of lesson 6. The outbox makes the transition a transport swap rather than a rewrite |
 | Direct videos → analysis calls without an outbox | Dual write: the `ready` status and the call are not atomic, a crash between them loses the description; no retries or backoff |
 | Shared DB access (analysis reads videos tables) | Hidden schema coupling, a service's storage cannot be changed independently, no clear data owner |
 
@@ -58,7 +58,7 @@ flowchart LR
 - (−) No shared transaction or JOIN across services: author profiles in lists will require aggregation at the gateway or in the client.
 
 ## Next steps
-- [ ] Lesson 4: outbox transport → Kafka (Redpanda) + Schema Registry; the `outbox` table stays, the schema format (JSON Schema → Avro) is fixed in a separate ADR.
+- [ ] Lesson 6: outbox transport → Kafka (Redpanda) + Schema Registry; the `outbox` table stays, the schema format (JSON Schema → Avro) is fixed in a separate ADR.
 - [ ] Phone confirmation (local SMS provider) — see residual risks in [ADR 0005](0005-phone-login-keycloak.md).
 - [ ] Architecture test (NetArchTest) on the assembly dependency graph.
-- [ ] Cross-service observability (trace_id from the event into analysis logs) — lesson 12.
+- [ ] Cross-service observability (trace_id from the event into analysis logs) — lesson 14.

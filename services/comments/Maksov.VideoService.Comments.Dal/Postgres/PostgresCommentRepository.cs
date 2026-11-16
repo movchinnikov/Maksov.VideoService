@@ -1,3 +1,5 @@
+using Maksov.VideoService.BuildingBlocks.Outbox;
+using Maksov.VideoService.Comments.Bll;
 using Maksov.VideoService.Comments.Bll.Ports;
 using Npgsql;
 
@@ -45,20 +47,34 @@ internal sealed class PostgresCommentRepository(NpgsqlDataSource dataSource) : I
         return await cmd.ExecuteScalarAsync(cancellationToken) as string;
     }
 
-    public async Task InsertAsync(NewComment comment, CancellationToken cancellationToken)
+    public async Task InsertAsync(NewComment comment, string videoOwnerId, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(comment);
-        await using var cmd = dataSource.CreateCommand("""
+        ArgumentNullException.ThrowIfNull(videoOwnerId);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using var tx = await connection.BeginTransactionAsync(cancellationToken);
+
+        await using (var cmd = new NpgsqlCommand("""
             insert into comments (id, video_id, author_id, author_username, text, created_at)
             values ($1, $2, $3, $4, $5, $6)
-            """);
-        cmd.Parameters.AddWithValue(comment.Id);
-        cmd.Parameters.AddWithValue(comment.VideoId);
-        cmd.Parameters.AddWithValue(comment.AuthorId);
-        cmd.Parameters.AddWithValue(comment.AuthorUsername);
-        cmd.Parameters.AddWithValue(comment.Text);
-        cmd.Parameters.AddWithValue(comment.CreatedAt.UtcDateTime);
-        await cmd.ExecuteNonQueryAsync(cancellationToken);
+            """, connection, tx))
+        {
+            cmd.Parameters.AddWithValue(comment.Id);
+            cmd.Parameters.AddWithValue(comment.VideoId);
+            cmd.Parameters.AddWithValue(comment.AuthorId);
+            cmd.Parameters.AddWithValue(comment.AuthorUsername);
+            cmd.Parameters.AddWithValue(comment.Text);
+            cmd.Parameters.AddWithValue(comment.CreatedAt.UtcDateTime);
+            await cmd.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        var eventId = Guid.CreateVersion7();
+        var payload = CommentEvents.AddedPayload(
+            eventId, comment.CreatedAt, comment.Id, comment.VideoId, comment.AuthorId, videoOwnerId, comment.Text.Length);
+        await OutboxStore.EnqueueAsync(
+            connection, tx, eventId, CommentEvents.AddedTopic, payload, CommentEvents.SubscribersOf(CommentEvents.AddedTopic), cancellationToken);
+
+        await tx.CommitAsync(cancellationToken);
     }
 
     public async Task<IReadOnlyList<CommentRecord>> ListAsync(Guid videoId, PageCursor? after, int limit, CancellationToken cancellationToken)
@@ -97,12 +113,34 @@ internal sealed class PostgresCommentRepository(NpgsqlDataSource dataSource) : I
         return rows.Count > 0 ? rows[0] : null;
     }
 
-    public async Task<bool> DeleteAsync(Guid videoId, Guid commentId, CancellationToken cancellationToken)
+    public async Task<bool> DeleteAsync(Guid videoId, Guid commentId, string deletedBy, CancellationToken cancellationToken)
     {
-        await using var cmd = dataSource.CreateCommand("delete from comments where video_id = $1 and id = $2");
-        cmd.Parameters.AddWithValue(videoId);
-        cmd.Parameters.AddWithValue(commentId);
-        return await cmd.ExecuteNonQueryAsync(cancellationToken) > 0;
+        ArgumentNullException.ThrowIfNull(deletedBy);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using var tx = await connection.BeginTransactionAsync(cancellationToken);
+
+        string? authorId;
+        await using (var cmd = new NpgsqlCommand("delete from comments where video_id = $1 and id = $2 returning author_id", connection, tx))
+        {
+            cmd.Parameters.AddWithValue(videoId);
+            cmd.Parameters.AddWithValue(commentId);
+            authorId = await cmd.ExecuteScalarAsync(cancellationToken) as string;
+        }
+
+        if (authorId is null)
+        {
+            // Already gone: a repeat emits no second event.
+            await tx.RollbackAsync(cancellationToken);
+            return false;
+        }
+
+        var eventId = Guid.CreateVersion7();
+        var payload = CommentEvents.DeletedPayload(eventId, TimeProvider.System.GetUtcNow(), commentId, videoId, authorId, deletedBy);
+        await OutboxStore.EnqueueAsync(
+            connection, tx, eventId, CommentEvents.DeletedTopic, payload, CommentEvents.SubscribersOf(CommentEvents.DeletedTopic), cancellationToken);
+
+        await tx.CommitAsync(cancellationToken);
+        return true;
     }
 
     private static async Task<IReadOnlyList<CommentRecord>> ReadAsync(NpgsqlCommand cmd, CancellationToken cancellationToken)

@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!-- Likes service host: composition root. -->
+  <PropertyGroup>
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Maksov.VideoService.Likes.Bll\Maksov.VideoService.Likes.Bll.csproj" />
+    <ProjectReference Include="..\Maksov.VideoService.Likes.Dal\Maksov.VideoService.Likes.Dal.csproj" />
+    <ProjectReference Include="..\Maksov.VideoService.Likes.Features.Likes\Maksov.VideoService.Likes.Features.Likes.csproj" />
+    <PackageReference Include="Maksov.VideoService.Web" />
+    <PackageReference Include="Maksov.VideoService.BuildingBlocks" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Http" />
+  </ItemGroup>
+
+</Project>

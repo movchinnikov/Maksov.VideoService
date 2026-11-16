@@ -1,4 +1,5 @@
 import { getAccessToken } from '../../app/auth';
+import { chunk, LIKE_BATCH_MAX } from '../lib/likes';
 import type {
   CreateUploadRequest,
   CreateUploadResponse,
@@ -8,6 +9,8 @@ import type {
   FeedIdsPage,
   FeedItem,
   FeedPage,
+  LikeInfo,
+  LikerPage,
   FollowPage,
   Recommendation,
   UserStats,
@@ -86,6 +89,16 @@ async function request<T>(path: string, init: RequestInit = {}, signal?: AbortSi
   return (await response.json()) as T;
 }
 
+/** Batch like info; the server accepts at most 50 ids per call, so larger lists are chunked. */
+async function fetchLikeInfo(kind: 'videos' | 'comments', ids: string[], signal?: AbortSignal): Promise<LikeInfo[]> {
+  const pages = await Promise.all(
+    chunk(ids, LIKE_BATCH_MAX).map((part) =>
+      request<{ items: LikeInfo[] }>(`/api/likes/${kind}${qs({ ids: part.join(',') })}`, {}, signal),
+    ),
+  );
+  return pages.flatMap((p) => p.items);
+}
+
 export const api = {
   listVideos: (cursor?: string, signal?: AbortSignal) =>
     request<VideoPage>(`/api/videos${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`, {}, signal),
@@ -118,6 +131,16 @@ export const api = {
       : request<{ following: string[]; followedBy?: string[] }>(`/api/friends/status${qs({ ids: ids.join(',') })}`, {}, signal),
   getFollowList: (id: string, kind: 'followers' | 'following', cursor?: string, signal?: AbortSignal) =>
     request<FollowPage>(`/api/friends/${encodeURIComponent(id)}/${kind}${qs({ cursor, limit: 20 })}`, {}, signal),
+  setVideoLike: (videoId: string, on: boolean) =>
+    requestVoid(`/api/videos/${encodeURIComponent(videoId)}/like`, { method: on ? 'PUT' : 'DELETE' }),
+  setCommentLike: (videoId: string, commentId: string, on: boolean) =>
+    requestVoid(`/api/videos/${encodeURIComponent(videoId)}/comments/${encodeURIComponent(commentId)}/like`, {
+      method: on ? 'PUT' : 'DELETE',
+    }),
+  getVideoLikeInfo: (ids: string[], signal?: AbortSignal) => fetchLikeInfo('videos', ids, signal),
+  getCommentLikeInfo: (ids: string[], signal?: AbortSignal) => fetchLikeInfo('comments', ids, signal),
+  getLikers: (videoId: string, cursor?: string, signal?: AbortSignal) =>
+    request<LikerPage>(`/api/videos/${encodeURIComponent(videoId)}/likes${qs({ cursor, limit: 20 })}`, {}, signal),
   getRecommendations: (signal?: AbortSignal) =>
     request<{ items: Recommendation[] }>(`/api/friends/recommendations${qs({ limit: 10 })}`, {}, signal),
   getUsersByIds: (ids: string[], signal?: AbortSignal) =>

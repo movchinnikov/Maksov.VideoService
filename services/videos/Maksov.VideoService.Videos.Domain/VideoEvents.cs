@@ -12,12 +12,13 @@ public static class VideoEvents
 
     public const string Analysis = "analysis";
     public const string Comments = "comments";
+    public const string Likes = "likes";
 
     /// <summary>Whom the event is addressed to.</summary>
     public static IReadOnlyList<string> SubscribersOf(string topic) => topic switch
     {
-        Processed => [Analysis, Comments],
-        Deleted => [Analysis, Comments],
+        Processed => [Analysis, Comments, Likes],
+        Deleted => [Analysis, Comments, Likes],
         _ => throw new ArgumentOutOfRangeException(nameof(topic), topic, "Unknown event topic"),
     };
 

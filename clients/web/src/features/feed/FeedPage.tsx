@@ -1,13 +1,17 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router';
 import { api, ApiError } from '../../shared/api/client';
-import type { Description, FeedItem } from '../../shared/api/types';
+import type { Description, FeedItem, LikeInfo } from '../../shared/api/types';
 import { forgetDescription, getDescriptionCached, useInView, useMe } from '../../shared/lib/data';
 import { isVertical } from '../../shared/lib/description';
 import { mergePages } from '../../shared/lib/pages';
 import { relativeTime } from '../../shared/lib/relativeTime';
 import { commentsPath, profilePath, videoPath } from '../../shared/lib/urls';
+import { emptyLike } from '../../shared/lib/likes';
+import { useLikes } from '../../shared/lib/useLikes';
 import { Avatar } from '../../shared/ui/Avatar';
+import { LikeButton } from '../../shared/ui/LikeButton';
+import { LikeSurface } from '../../shared/ui/LikeSurface';
 import { Poster } from '../../shared/ui/Poster';
 import { Player } from '../watch/Player';
 
@@ -27,15 +31,22 @@ export function FeedPage() {
   const [state, setState] = useState<State>({ kind: 'loading' });
   const [activeId, setActiveId] = useState<string | null>(null);
   const me = useMe();
+  const { likes, load: loadLikes, set: setLike, toggle: toggleLike } = useLikes(
+    (ids) => api.getVideoLikeInfo(ids),
+    (id, on) => api.setVideoLike(id, on),
+  );
 
   const load = useCallback((signal?: AbortSignal) => {
     loadFeedPage(undefined, signal).then(
-      (page) => setState({ kind: 'loaded', items: page.items, nextCursor: page.nextCursor, loadingMore: false }),
+      (page) => {
+        loadLikes(page.items.map((i) => i.id));
+        setState({ kind: 'loaded', items: page.items, nextCursor: page.nextCursor, loadingMore: false });
+      },
       (e: unknown) => {
         if (!signal?.aborted) setState({ kind: 'error', message: e instanceof ApiError ? e.message : 'Could not reach the server.' });
       },
     );
-  }, []);
+  }, [loadLikes]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -48,7 +59,10 @@ export function FeedPage() {
     const { items, nextCursor } = state;
     setState({ ...state, loadingMore: true });
     loadFeedPage(nextCursor).then(
-      (page) => setState({ kind: 'loaded', items: mergePages(items, page.items), nextCursor: page.nextCursor, loadingMore: false }),
+      (page) => {
+        loadLikes(page.items.map((i) => i.id));
+        setState({ kind: 'loaded', items: mergePages(items, page.items), nextCursor: page.nextCursor, loadingMore: false });
+      },
       () => setState({ kind: 'loaded', items, nextCursor, loadingMore: false }),
     );
   };
@@ -98,6 +112,9 @@ export function FeedPage() {
             key={item.id}
             item={item}
             own={me?.id === item.ownerId}
+            like={likes[item.id] ?? emptyLike(item.id)}
+            onToggleLike={() => toggleLike(item.id)}
+            onDoubleLike={() => setLike(item.id, true)}
             active={activeId === item.id}
             onPlay={() => setActiveId(item.id)}
             onDelete={() => void remove(item.id)}
@@ -117,12 +134,18 @@ export function FeedPage() {
 function FeedCard({
   item,
   own,
+  like,
+  onToggleLike,
+  onDoubleLike,
   active,
   onPlay,
   onDelete,
 }: {
   item: FeedItem;
   own: boolean;
+  like: LikeInfo;
+  onToggleLike: () => void;
+  onDoubleLike: () => void;
   active: boolean;
   onPlay: () => void;
   onDelete: () => void;
@@ -156,6 +179,7 @@ function FeedCard({
           {relativeTime(item.createdAt)}
         </time>
       </header>
+      <LikeSurface onDoubleLike={onDoubleLike}>
       {active ? (
         <Player playback={item.playback} renditions={[]} title={item.title} horizontal={horizontal} autoPlay />
       ) : (
@@ -169,7 +193,9 @@ function FeedCard({
           <span className="post__play data">watch</span>
         </button>
       )}
+      </LikeSurface>
       <div className="post__actions data">
+        <LikeButton count={like.count} liked={like.likedByMe} onToggle={onToggleLike} label={like.likedByMe ? 'Unlike' : 'Like'} />
         <Link to={commentsPath(item.id)}>Comments</Link>
         <Link to={videoPath(item.id)}>Open</Link>
         {own &&

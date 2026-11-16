@@ -1,18 +1,20 @@
 openapi: 3.1.0
 info:
   title: VideoService API
-  version: 0.5.0
+  version: 0.6.0
   description: |
     Public API exposed through the gateway (`http://localhost:8081`). The gateway validates the JWT and routes:
     `GET /api/videos/{id}/description` → analysis; `/api/videos/{id}/comments/**` → comments; `GET /api/feed` → feed;
-    `PUT|DELETE /api/users/{id}/follow` and `/api/friends/**` (stats, status, followers, following, recommendations) → friends; `GET /api/users/{id}/videos`, `/api/videos/**`
+    `PUT|DELETE /api/users/{id}/follow` and `/api/friends/**` (stats, status, followers, following, recommendations) → friends;
+    `PUT|DELETE /api/videos/{id}/like`, `PUT|DELETE /api/videos/{id}/comments/{commentId}/like`, `GET /api/videos/{id}/likes`, `GET /api/likes/videos|comments` → likes;
+    `POST /graphql` → the GraphQL layer inside the gateway (no proxying; see ADR 0012 and `contracts/graphql/gateway.graphql`); `GET /api/users/{id}/videos`, `/api/videos/**`
     (including `GET /api/videos/cards`) → videos; `/api/users/**` → users.
     Internal endpoints (`/internal/**`) are not published through the gateway (404); see `internal-analysis.yaml`,
-    `internal-comments.yaml`, `internal-users.yaml`, `internal-friends.yaml`, `internal-videos.yaml`.
+    `internal-comments.yaml`, `internal-users.yaml`, `internal-friends.yaml`, `internal-videos.yaml`, `internal-likes.yaml`.
 
     Lesson 1: video upload (vertical 9:16 is the target, horizontal is supported), processing status,
     own video list, DASH/HLS playback, video description, profiles, follows and recommended friends, people search,
-    feed (a page of video ids) and video cards, comments, deletion.
+    feed (a page of video ids) and video cards, comments, deletion, likes of videos and comments and a GraphQL endpoint that composes several services in one request.
     All endpoints require a Keycloak JWT (realm `videoservice`, audience `videoservice-api`).
 
     Visibility: **`ready` videos are visible to any authenticated user** (get, stream, poster, cards, feed, profile grid).
@@ -28,6 +30,8 @@ tags:
   - name: Users
   - name: Feed
   - name: Friends
+  - name: Likes
+  - name: GraphQL
   - name: Comments
 paths:
   /api/videos:
@@ -221,6 +225,138 @@ paths:
         '204': { description: Deleted }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /api/videos/{id}/like:
+    put:
+      tags: [Likes]
+      operationId: LikeVideo
+      summary: Like a video (idempotent)
+      description: |
+        Liking twice keeps one like and emits no second event. A video unknown to the likes service (it learns about videos from `video.processed.v1`, up to ~30 s after `ready`) or a deleted one returns 404.
+        Emits `video.liked.v1` (subscriber `lake`).
+      parameters: [{ $ref: '#/components/parameters/VideoId' }]
+      responses:
+        '204': { description: The like exists }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Likes]
+      operationId: UnlikeVideo
+      summary: Remove the like (idempotent)
+      description: Emits `video.unliked.v1` only if a like existed.
+      parameters: [{ $ref: '#/components/parameters/VideoId' }]
+      responses:
+        '204': { description: The like does not exist }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/videos/{id}/comments/{commentId}/like:
+    put:
+      tags: [Likes]
+      operationId: LikeComment
+      summary: Like a comment (idempotent)
+      description: The comment must belong to the video in the path and be known to the likes service (it learns about comments from `comment.added.v1`); otherwise 404. Emits `comment.liked.v1`.
+      parameters:
+        - { $ref: '#/components/parameters/VideoId' }
+        - { name: commentId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '204': { description: The like exists }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Likes]
+      operationId: UnlikeComment
+      summary: Remove the like of a comment (idempotent)
+      parameters:
+        - { $ref: '#/components/parameters/VideoId' }
+        - { name: commentId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '204': { description: The like does not exist }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/videos/{id}/likes:
+    get:
+      tags: [Likes]
+      operationId: ListLikers
+      summary: People who liked a video, newest first (keyset pagination)
+      description: Visible to any authenticated user. A malformed cursor is ignored (first page).
+      parameters:
+        - { $ref: '#/components/parameters/VideoId' }
+        - { name: cursor, in: query, schema: { type: string, maxLength: 128 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
+      responses:
+        '200':
+          description: A page of likers
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LikersPage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/likes/videos:
+    get:
+      tags: [Likes]
+      operationId: GetVideoLikeCounts
+      summary: Like counters of videos and whether the caller liked them
+      description: 1 to 50 comma-separated ids (400 otherwise or on a malformed id); unknown ids return count 0.
+      parameters:
+        - { name: ids, in: query, required: true, schema: { type: string }, description: 'Comma-separated video ids, at most 50' }
+      responses:
+        '200':
+          description: Counters
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LikeCounts' }
+        '400': { $ref: '#/components/responses/ValidationProblem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/likes/comments:
+    get:
+      tags: [Likes]
+      operationId: GetCommentLikeCounts
+      summary: Like counters of comments and whether the caller liked them
+      description: Same shape and limits as `GET /api/likes/videos`.
+      parameters:
+        - { name: ids, in: query, required: true, schema: { type: string }, description: 'Comma-separated comment ids, at most 50' }
+      responses:
+        '200':
+          description: Counters
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LikeCounts' }
+        '400': { $ref: '#/components/responses/ValidationProblem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /graphql:
+    post:
+      tags: [GraphQL]
+      operationId: GraphQL
+      summary: GraphQL queries and mutations composed over the REST services
+      description: |
+        Served by the gateway itself (not proxied). Same Keycloak token as REST; the gateway forwards the caller's `Authorization` header to the services (they validate it again).
+        Queries and mutations only, no subscriptions. Schema: `contracts/graphql/gateway.graphql`.
+        Protection: maximum nesting depth 8 (deeper queries are rejected before execution), page size 1..50 (feed 1..30), request body at most 64 KiB, execution timeout 20 s, rate limit 300 requests per user per minute (429),
+        introspection only when `GraphQL:AllowIntrospection=true` (on in the local stack, off by default).
+        Errors carry `extensions.code` (`NOT_FOUND`, `VALIDATION`, `UNAVAILABLE`, `FORBIDDEN`); partial data is allowed. `/internal/**` is never used by GraphQL.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [query]
+              properties:
+                query: { type: string }
+                operationName: { type: [string, 'null'] }
+                variables: { type: [object, 'null'], additionalProperties: true }
+      responses:
+        '200':
+          description: GraphQL response (`data` and/or `errors`; failed fields are reported in `errors` with HTTP 200)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: [object, 'null'], additionalProperties: true }
+                  errors: { type: array, items: { type: object, additionalProperties: true } }
+        '400': { description: Malformed request or a body over 64 KiB (a too deep or invalid query is rejected before execution with an `errors` entry) }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { description: Rate limit exceeded }
   /api/feed:
     get:
       tags: [Feed]
@@ -648,6 +784,31 @@ components:
         width: { type: integer }
         height: { type: integer }
         playback: { $ref: '#/components/schemas/Playback' }
+    LikeCount:
+      type: object
+      required: [id, count, likedByMe]
+      properties:
+        id: { type: string, format: uuid }
+        count: { type: integer }
+        likedByMe: { type: boolean }
+    LikeCounts:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/LikeCount' } }
+    Liker:
+      type: object
+      required: [userId, likedAt]
+      properties:
+        userId: { type: string }
+        likedAt: { type: string, format: date-time }
+    LikersPage:
+      type: object
+      required: [items, nextCursor, total]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Liker' } }
+        nextCursor: { type: [string, 'null'] }
+        total: { type: integer }
     FeedIdsPage:
       type: object
       required: [ids, nextCursor]

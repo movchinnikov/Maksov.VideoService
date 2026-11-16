@@ -19,7 +19,7 @@ public sealed class OutboxTests : IAsyncLifetime
 {
     private NpgsqlDataSource? _db;
 
-    private static readonly string[] Subs = [VideoEvents.Analysis, VideoEvents.Comments];
+    private static readonly string[] Subs = [VideoEvents.Analysis, VideoEvents.Comments, VideoEvents.Likes];
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
@@ -77,7 +77,7 @@ public sealed class OutboxTests : IAsyncLifetime
 
         var batch = await new PostgresOutbox(Db).ClaimAsync(Subs, 10, TimeSpan.FromMinutes(1), Ct);
 
-        Assert.Equal(2, batch.Count);
+        Assert.Equal(3, batch.Count);
         Assert.Equal(Subs.Order(), batch.Select(m => m.Subscriber).Order());
         Assert.All(batch, m => Assert.Equal("video.processed.v1", m.Topic));
         var message = batch[0];
@@ -99,13 +99,15 @@ public sealed class OutboxTests : IAsyncLifetime
         await ReadyVideoAsync("bob");
         var outbox = new PostgresOutbox(Db);
 
-        var both = await outbox.ClaimAsync(Subs, 10, TimeSpan.FromMinutes(1), Ct);
-        Assert.Equal(2, both.Count);
+        var all = await outbox.ClaimAsync(Subs, 10, TimeSpan.FromMinutes(1), Ct);
+        Assert.Equal(3, all.Count);
         Assert.Empty(await outbox.ClaimAsync(Subs, 10, TimeSpan.FromMinutes(1), Ct)); // locked by another dispatcher
 
-        var first = both.Single(m => m.Subscriber == VideoEvents.Analysis);
-        var other = both.Single(m => m.Subscriber == VideoEvents.Comments);
+        var first = all.Single(m => m.Subscriber == VideoEvents.Analysis);
+        var other = all.Single(m => m.Subscriber == VideoEvents.Comments);
         await outbox.MarkSentAsync(other.Id, other.Subscriber, Ct); // each subscriber has its own delivery
+        var third = all.Single(m => m.Subscriber == VideoEvents.Likes);
+        await outbox.MarkSentAsync(third.Id, third.Subscriber, Ct);
         await outbox.MarkFailedAsync(first.Id, first.Subscriber, "analysis down", TimeSpan.FromHours(1), Ct);
         Assert.Empty(await outbox.ClaimAsync(Subs, 10, TimeSpan.FromMinutes(1), Ct)); // waits for the pause
 
@@ -138,7 +140,7 @@ public sealed class OutboxTests : IAsyncLifetime
         Assert.False(completed);
 
         var batch = await new PostgresOutbox(Db).ClaimAsync(Subs, 10, TimeSpan.FromMinutes(1), Ct);
-        Assert.Equal(2, batch.Count);
+        Assert.Equal(3, batch.Count);
         Assert.All(batch, m => Assert.Equal("video.deleted.v1", m.Topic));
         Assert.Null(await videos.GetVisibleAsync(id, "dave", Ct));
     }

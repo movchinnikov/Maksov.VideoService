@@ -53,6 +53,28 @@ export function joinRecommendations(recs: Recommendation[], users: UserSummary[]
   return rows;
 }
 
+/** Rows for the likers list: profiles and relation flags joined onto like items. */
+export function buildLikerRows(
+  items: { userId: string }[],
+  users: UserSummary[],
+  following: string[],
+  followedBy: string[],
+): FollowRow[] {
+  const byId = new Map(users.map((u) => [u.id, u]));
+  const f = new Set(following);
+  const b = new Set(followedBy);
+  return items.map((i) => {
+    const u = byId.get(i.userId);
+    return {
+      id: i.userId,
+      username: u?.username ?? i.userId,
+      displayName: u?.displayName ?? '',
+      isFollowing: f.has(i.userId),
+      followsYou: b.has(i.userId),
+    };
+  });
+}
+
 export function mutualLabel(n: number): string {
   return `${n} mutual ${n === 1 ? 'friend' : 'friends'}`;
 }

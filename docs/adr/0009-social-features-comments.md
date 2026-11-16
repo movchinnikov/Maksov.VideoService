@@ -41,7 +41,7 @@ In the first version everyone saw only their own videos. An Instagram-like servi
 - Event contracts: [video-processed.v1.json](../../contracts/events/video-processed.v1.json), [video-deleted.v1.json](../../contracts/events/video-deleted.v1.json); receiver APIs — `internal-analysis.yaml`, `internal-comments.yaml`, `internal-users.yaml`.
 
 ### Deferred
-- "Interesting videos" (recommendations, the "Interesting" tab) — lessons 8–9 (embeddings and recommendations); there is currently neither an API nor a screen.
+- "Interesting videos" (recommendations, the "Interesting" tab) — lessons 10–11 (embeddings and recommendations); there is currently neither an API nor a screen.
 - Likes, comment replies, notifications — lesson 2 onward.
 
 ## Alternatives considered
@@ -64,7 +64,7 @@ In the first version everyone saw only their own videos. An Instagram-like servi
 - (−) More tables and migrations, one more container (comments 0.5 CPU / 192 MB + migrator).
 
 ## Next steps
-- [ ] Lesson 4: outbox transport → Kafka, subscribers become consumer groups.
-- [ ] Lesson 5: feed on the hot store and fan-out instead of querying follows.
+- [ ] Lesson 6: outbox transport → Kafka, subscribers become consumer groups.
+- [ ] Lesson 7: feed on the hot store and fan-out instead of querying follows.
 - [ ] Likes, comment replies, notifications; private accounts (if needed) — a separate ADR.
-- [ ] "Interesting videos" — after embeddings (lessons 8–9).
+- [ ] "Interesting videos" — after embeddings (lessons 10–11).

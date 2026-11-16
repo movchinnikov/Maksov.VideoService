@@ -163,3 +163,20 @@ export interface Recommendation {
   mutualFriends: number;
   similarity: number;
 }
+
+export interface LikeInfo {
+  id: string;
+  count: number;
+  likedByMe: boolean;
+}
+
+export interface LikerItem {
+  userId: string;
+  likedAt: string;
+}
+
+export interface LikerPage {
+  items: LikerItem[];
+  nextCursor: string | null;
+  total: number;
+}

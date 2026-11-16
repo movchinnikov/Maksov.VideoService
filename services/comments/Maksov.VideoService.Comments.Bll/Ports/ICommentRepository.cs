@@ -19,7 +19,8 @@ public interface ICommentRepository
     /// <summary>Owner of a live video; unknown or deleted yields <c>null</c>.</summary>
     Task<string?> GetVideoOwnerAsync(Guid videoId, CancellationToken cancellationToken);
 
-    Task InsertAsync(NewComment comment, CancellationToken cancellationToken);
+    /// <summary>Inserts the comment and writes comment.added.v1 (one outbox row per subscriber) in the same transaction.</summary>
+    Task InsertAsync(NewComment comment, string videoOwnerId, CancellationToken cancellationToken);
 
     /// <summary>Video comments, newest first. Keyset pagination by (created_at, id).</summary>
     Task<IReadOnlyList<CommentRecord>> ListAsync(Guid videoId, PageCursor? after, int limit, CancellationToken cancellationToken);
@@ -28,7 +29,8 @@ public interface ICommentRepository
 
     Task<CommentRecord?> GetAsync(Guid videoId, Guid commentId, CancellationToken cancellationToken);
 
-    Task<bool> DeleteAsync(Guid videoId, Guid commentId, CancellationToken cancellationToken);
+    /// <summary>Deletes the comment and writes comment.deleted.v1 in the same transaction. False if it did not exist (no event).</summary>
+    Task<bool> DeleteAsync(Guid videoId, Guid commentId, string deletedBy, CancellationToken cancellationToken);
 }
 
 /// <summary>Keyset pagination position; passed as an opaque string in the API.</summary>
@@ -51,7 +53,15 @@ public sealed record PageCursor(DateTimeOffset CreatedAt, Guid Id)
         }
 
         Span<byte> buffer = stackalloc byte[48];
-        if (!Base64Url.TryDecodeFromChars(value, buffer, out var written) || written != 24)
+        int written;
+        try
+        {
+            if (!Base64Url.TryDecodeFromChars(value, buffer, out written) || written != 24)
+            {
+                return null;
+            }
+        }
+        catch (FormatException)
         {
             return null;
         }
